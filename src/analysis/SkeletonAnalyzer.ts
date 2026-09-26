@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { BoneInfo, DiagnosticLocation } from '../types';
 import { skinnedVertexWorldPosition } from './SkinWeightMeasure';
+import type { GltfSourceAudit } from '../loaders/GltfSourceAudit';
 
 export interface SkinningStats {
   skinnedMeshCount: number;
@@ -26,9 +27,7 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
 
   root.traverse((obj) => {
     if (obj.name?.startsWith('__ascope_internal_')) return;
-    if ((obj as THREE.Bone).isBone) {
-      bonesMap.set(obj.uuid, obj as THREE.Bone);
-    }
+    if ((obj as THREE.Bone).isBone) bonesMap.set(obj.uuid, obj as THREE.Bone);
     if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
       const sm = obj as THREE.SkinnedMesh;
       skinnedMeshes.push(sm);
@@ -38,21 +37,15 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
 
   const rootBones: string[] = [];
   const referencedBones = new Set<string>();
-
-  // Bone info list
   const bones: BoneInfo[] = [];
   for (const bone of bonesMap.values()) {
     const parent = bone.parent;
     const isRoot = !parent || !(parent as THREE.Bone).isBone;
-    if (isRoot) {
-      rootBones.push(bone.name || bone.uuid.slice(0, 8));
-    }
+    if (isRoot) rootBones.push(bone.name || bone.uuid.slice(0, 8));
 
     const childrenNames: string[] = [];
     for (const child of bone.children) {
-      if ((child as THREE.Bone).isBone) {
-        childrenNames.push(child.name || child.uuid.slice(0, 8));
-      }
+      if ((child as THREE.Bone).isBone) childrenNames.push(child.name || child.uuid.slice(0, 8));
     }
 
     bones.push({
@@ -77,21 +70,17 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
   for (const sm of skinnedMeshes) {
     const geom = sm.geometry;
     if (!geom) continue;
-
     const skinIndex = geom.attributes.skinIndex;
     const skinWeight = geom.attributes.skinWeight;
 
     if (skinIndex && skinWeight) {
-      const vCount = skinWeight.count;
-      const itemSize = skinWeight.itemSize; // typically 4
-
-      for (let i = 0; i < vCount; i++) {
+      for (let i = 0; i < skinWeight.count; i++) {
         let weightSum = 0;
         let activeInfluences = 0;
         let redundantActiveInfluence = false;
         const activeBoneIndices = new Set<number>();
 
-        for (let j = 0; j < itemSize; j++) {
+        for (let j = 0; j < skinWeight.itemSize; j++) {
           const w = skinWeight.getComponent(i, j);
           const bIdx = skinIndex.getComponent(i, j);
           if (w > 0.001) {
@@ -99,9 +88,7 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
             weightSum += w;
             if (activeBoneIndices.has(bIdx)) redundantActiveInfluence = true;
             activeBoneIndices.add(bIdx);
-            if (sm.skeleton && sm.skeleton.bones[bIdx]) {
-              referencedBones.add(sm.skeleton.bones[bIdx].uuid);
-            }
+            if (sm.skeleton && sm.skeleton.bones[bIdx]) referencedBones.add(sm.skeleton.bones[bIdx].uuid);
           }
         }
 
@@ -118,10 +105,7 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
           }
         }
 
-        if (activeInfluences > maxInfluences) {
-          maxInfluences = activeInfluences;
-        }
-
+        maxInfluences = Math.max(maxInfluences, activeInfluences);
         if (activeInfluences === 0 || weightSum < 0.001) {
           zeroWeightVertices++;
           if (zeroWeightLocations.length < 16) {
@@ -149,12 +133,25 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
     }
   }
 
+  // GLTFLoader normalizes skin weights on the display geometry. SourceAudit is
+  // measured directly from WEIGHTS_0 before that normalization, so diagnostics
+  // must retain defects that would otherwise disappear merely by opening a file.
+  const sourceAudit = root.userData.__assetDoctorSourceAudit as GltfSourceAudit | undefined;
+  if (sourceAudit?.rawSkinWeights) {
+    invalidWeightSumVertices = Math.max(
+      invalidWeightSumVertices,
+      sourceAudit.rawSkinWeights.invalidSumVertices
+    );
+    zeroWeightVertices = Math.max(
+      zeroWeightVertices,
+      sourceAudit.rawSkinWeights.zeroWeightVertices
+    );
+  }
+
   let unusedBonesCount = 0;
   if (skinnedMeshes.length > 0) {
     for (const boneUuid of bonesMap.keys()) {
-      if (!referencedBones.has(boneUuid)) {
-        unusedBonesCount++;
-      }
+      if (!referencedBones.has(boneUuid)) unusedBonesCount++;
     }
   }
 
