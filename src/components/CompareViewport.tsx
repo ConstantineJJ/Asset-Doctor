@@ -11,12 +11,14 @@ import {
   RotateCcw,
   Scale,
   Stethoscope,
+  Sun,
   X,
 } from 'lucide-react';
 import { GLBLoaderService } from '../loaders/GLBLoaderService';
 import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
 import { analyzeTextures } from '../analysis/TextureAnalyzer';
 import { CompareSceneManager } from '../viewer/CompareSceneManager';
+import { CompareInspectorPanel } from './CompareInspectorPanel';
 import type { LightingPreset, RenderMode } from '../types';
 import type {
   CompareAssetRecord,
@@ -29,9 +31,7 @@ interface CompareViewportProps {
   open: boolean;
   onClose: () => void;
   onOpenInDoctor: (asset: CompareAssetRecord) => void;
-  onSnapshotChange: (snapshot: CompareSessionSnapshot) => void;
   renderMode: RenderMode;
-  lightingPreset: LightingPreset;
 }
 
 const SLOT_NAMES = ['A', 'B', 'C', 'D', 'E'] as const;
@@ -44,9 +44,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   open,
   onClose,
   onOpenInDoctor,
-  onSnapshotChange,
   renderMode,
-  lightingPreset,
 }) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -56,6 +54,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   const [assets, setAssets] = useState<CompareAssetRecord[]>([]);
   const [viewMode, setViewMode] = useState<CompareViewMode>('grid');
   const [scaleMode, setScaleMode] = useState<CompareScaleMode>('real');
+  const [lightingPreset, setLightingPreset] = useState<LightingPreset>('neutral-studio');
   const [syncCameras, setSyncCameras] = useState(true);
   const [syncAnimations, setSyncAnimations] = useState(true);
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
@@ -69,6 +68,42 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   const [dragOver, setDragOver] = useState(false);
 
   const assetIdentity = useMemo(() => assets.map((asset) => asset.id).join('|'), [assets]);
+
+  const snapshot = useMemo<CompareSessionSnapshot>(() => ({
+    assets: assets.map((asset) => ({
+      id: asset.id,
+      slot: asset.slot,
+      fileName: asset.fileName,
+      fileSizeBytes: asset.fileSizeBytes,
+      triangleCount: asset.summary.triangleCount,
+      vertexCount: asset.summary.vertexCount,
+      meshCount: asset.summary.meshCount,
+      materialCount: asset.summary.materialCount,
+      textureCount: asset.summary.textureCount,
+      boneCount: asset.summary.boneCount,
+      animationCount: asset.animations.length,
+      drawCalls: asset.drawCalls,
+      textureVramBytes: asset.textureVramBytes,
+      height: asset.summary.boundingBox.size[1],
+      manualScale: asset.manualScale,
+    })),
+    activeAssetId,
+    viewMode,
+    scaleMode,
+    syncCameras,
+    syncAnimations,
+    renderMode,
+    lightingPreset,
+  }), [
+    assets,
+    activeAssetId,
+    viewMode,
+    scaleMode,
+    syncCameras,
+    syncAnimations,
+    renderMode,
+    lightingPreset,
+  ]);
 
   useEffect(() => {
     loaderRef.current = new GLBLoaderService();
@@ -95,7 +130,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       loaderRef.current?.dispose();
       loaderRef.current = null;
     };
-    // Compare manager owns a persistent session for the lifetime of the viewport.
+    // Compare manager owns a persistent session for the lifetime of Viewport.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -118,45 +153,6 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   useEffect(() => { managerRef.current?.setAnimationSpeed(speed); }, [speed]);
   useEffect(() => { managerRef.current?.setRenderMode(renderMode); }, [renderMode]);
   useEffect(() => { managerRef.current?.setLightingPreset(lightingPreset); }, [lightingPreset]);
-
-  useEffect(() => {
-    onSnapshotChange({
-      assets: assets.map((asset) => ({
-        id: asset.id,
-        slot: asset.slot,
-        fileName: asset.fileName,
-        fileSizeBytes: asset.fileSizeBytes,
-        triangleCount: asset.summary.triangleCount,
-        vertexCount: asset.summary.vertexCount,
-        meshCount: asset.summary.meshCount,
-        materialCount: asset.summary.materialCount,
-        textureCount: asset.summary.textureCount,
-        boneCount: asset.summary.boneCount,
-        animationCount: asset.animations.length,
-        drawCalls: asset.drawCalls,
-        textureVramBytes: asset.textureVramBytes,
-        height: asset.summary.boundingBox.size[1],
-        manualScale: asset.manualScale,
-      })),
-      activeAssetId,
-      viewMode,
-      scaleMode,
-      syncCameras,
-      syncAnimations,
-      renderMode,
-      lightingPreset,
-    });
-  }, [
-    assets,
-    activeAssetId,
-    viewMode,
-    scaleMode,
-    syncCameras,
-    syncAnimations,
-    renderMode,
-    lightingPreset,
-    onSnapshotChange,
-  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -390,6 +386,25 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
           </>
         )}
 
+        <div className="ml-auto flex items-center gap-1 rounded border border-[#3a404c] bg-[#20232a] px-1.5 py-1 text-[10px]">
+          <Sun className="h-3.5 w-3.5 text-amber-400" />
+          <select
+            value={lightingPreset}
+            onChange={(event) => setLightingPreset(event.target.value as LightingPreset)}
+            className="bg-transparent text-gray-300 outline-none"
+            title="Compare lighting preset"
+          >
+            <option value="neutral-studio" className="bg-[#1e2127]">Neutral Studio</option>
+            <option value="soft-studio" className="bg-[#1e2127]">Soft Studio</option>
+            <option value="hard-studio" className="bg-[#1e2127]">Hard Studio</option>
+            <option value="outdoor" className="bg-[#1e2127]">Outdoor</option>
+            <option value="sunset" className="bg-[#1e2127]">Sunset</option>
+            <option value="top-light" className="bg-[#1e2127]">Top Light</option>
+            <option value="rim-light" className="bg-[#1e2127]">Rim Light</option>
+            <option value="dark-studio" className="bg-[#1e2127]">Dark Studio</option>
+          </select>
+        </div>
+
         <button
           onClick={() => managerRef.current?.resetCameras()}
           className="rounded p-1.5 text-gray-400 hover:bg-[#252932] hover:text-white"
@@ -448,7 +463,6 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
         ))}
       </div>
 
-      {/* Animation comparison transport */}
       {anyAnimations && assets.length > 0 && (
         <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-md border border-[#343946] bg-[#171a20]/95 px-2.5 py-1.5 shadow-xl backdrop-blur-sm">
           <button
@@ -536,9 +550,17 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
 
       <div className="pointer-events-none absolute bottom-3 left-3 z-10 text-[9px] text-gray-500">
         {viewMode === 'lineup'
-          ? 'Click model to select · Alt + wheel over model = manual size · top toolbar controls lighting/render mode'
+          ? 'Click model to select · Alt + wheel over model = manual size · Render mode stays linked to top toolbar'
           : 'Click a cell to select · Double-click for Solo · cameras use normalized framing'}
       </div>
+
+      {/* Fixed panel deliberately covers the Doctor inspector while Compare is active.
+          It is not another floating viewport overlay, so the fifth model stays visible. */}
+      {open && (
+        <div className="fixed right-0 top-12 bottom-0 z-[70]">
+          <CompareInspectorPanel snapshot={snapshot} />
+        </div>
+      )}
     </div>
   );
 };
