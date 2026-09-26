@@ -34,8 +34,10 @@ interface SlotRuntime {
 }
 
 interface LineupRootRuntime {
-  assetId: string;
+  asset: CompareAssetRecord;
   root: THREE.Group;
+  mixer: THREE.AnimationMixer | null;
+  action: THREE.AnimationAction | null;
 }
 
 interface LineupRuntime {
@@ -50,10 +52,10 @@ interface LineupRuntime {
 /**
  * Multi-Asset Compare renderer.
  *
- * One canvas + one WebGLRenderer is shared by every compare cell. Grid mode is
- * rendered with viewport/scissor rectangles; each model owns an independent
- * scene/camera/mixer. Lineup uses presentation-only clones so manual size
- * matching never mutates the source model kept for Doctor or export.
+ * A single WebGLRenderer serves every compare cell. Grid assets keep independent
+ * cameras. Lineup uses presentation-only SkeletonUtils clones, including their
+ * own AnimationMixers, so playback never animates an invisible source while the
+ * visible Lineup clone remains frozen.
  */
 export class CompareSceneManager {
   public readonly renderer: THREE.WebGLRenderer;
@@ -76,7 +78,7 @@ export class CompareSceneManager {
   private active = true;
   private animationSpeed = 1;
   private animationFrameId: number | null = null;
-  private clock = new THREE.Clock();
+  private readonly clock = new THREE.Clock();
   private syncingCamera = false;
   private lastProgressPublish = 0;
   private readonly manualScales = new Map<string, number>();
@@ -91,7 +93,6 @@ export class CompareSceneManager {
   constructor(container: HTMLElement, callbacks: CompareSceneManagerCallbacks = {}) {
     this.container = container;
     this.callbacks = callbacks;
-
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: 'high-performance',
@@ -104,9 +105,11 @@ export class CompareSceneManager {
     this.renderer.toneMappingExposure = 1;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.domElement.style.width = '100%';
-    this.renderer.domElement.style.height = '100%';
-    this.renderer.domElement.style.display = 'block';
+    Object.assign(this.renderer.domElement.style, {
+      width: '100%',
+      height: '100%',
+      display: 'block',
+    });
     container.appendChild(this.renderer.domElement);
 
     this.onPointerDownBound = (event) => this.handlePointerDown(event);
@@ -117,7 +120,6 @@ export class CompareSceneManager {
     this.renderer.domElement.addEventListener('dblclick', this.onDoubleClickBound);
     this.renderer.domElement.addEventListener('wheel', this.onWheelBound, { passive: false });
     window.addEventListener('resize', this.onResizeBound);
-
     this.startRenderLoop();
   }
 
@@ -135,13 +137,14 @@ export class CompareSceneManager {
     const removedRoots = this.assets
       .filter((asset) => !nextIds.has(asset.id))
       .map((asset) => asset.root);
+    const progress = this.getReferenceNormalizedTime();
 
     for (const asset of assets) {
       if (!this.manualScales.has(asset.id)) {
         this.manualScales.set(asset.id, this.clampManualScale(asset.manualScale));
       }
     }
-    for (const id of Array.from(this.manualScales.keys())) {
+    for (const id of [...this.manualScales.keys()]) {
       if (!nextIds.has(id)) this.manualScales.delete(id);
     }
 
@@ -163,15 +166,16 @@ export class CompareSceneManager {
       this.callbacks.onSoloRequest?.(null);
     }
 
-    this.rebuildLineup(true);
+    this.rebuildLineup(false);
+    this.seekNormalized(progress);
     this.updateControlEnablement();
     removedRoots.forEach((root) => this.disposeAssetRoot(root));
   }
 
   public setViewMode(mode: CompareViewMode) {
     this.viewMode = mode;
+    if (mode === 'lineup' && !this.lineup) this.rebuildLineup(true);
     this.updateControlEnablement();
-    if (mode === 'lineup') this.rebuildLineup(true);
   }
 
   public setScaleMode(mode: CompareScaleMode) {
@@ -201,6 +205,7 @@ export class CompareSceneManager {
 
   public setSyncAnimations(enabled: boolean) {
     this.syncAnimations = enabled;
+    if (enabled) this.seekNormalized(this.getReferenceNormalizedTime());
   }
 
   public setSoloAssetId(assetId: string | null) {
@@ -213,6 +218,7 @@ export class CompareSceneManager {
     this.activeAssetId = assetId;
     this.callbacks.onActiveAssetChange?.(assetId ?? '');
     this.updateControlEnablement();
+    if (this.syncAnimations) this.seekNormalized(this.getReferenceNormalizedTime());
   }
 
   public setManualScale(assetId: string, scale: number, reframe = false) {
@@ -241,50 +247,47 @@ export class CompareSceneManager {
     const clip = slot.asset.animations[clipIndex];
     if (!clip || !slot.mixer) return;
 
+    const progress = this.getReferenceNormalizedTime();
     slot.action?.stop();
-    const action = slot.mixer.clipAction(clip);
-    action.reset();
-    action.enabled = true;
-    action.paused = !this.playing;
-    action.clampWhenFinished = !this.looping;
-    action.setLoop(this.looping ? THREE.LoopRepeat : THREE.LoopOnce, this.looping ? Infinity : 1);
-    action.setEffectiveTimeScale(this.animationSpeed);
-    action.play();
-    slot.action = action;
+    slot.action = this.createAction(slot.mixer, clip);
 
-    if (this.syncAnimations) this.seekNormalized(this.getReferenceNormalizedTime());
+    const lineupEntry = this.lineup?.roots.find((entry) => entry.asset.id === assetId);
+    if (lineupEntry?.mixer) {
+      lineupEntry.action?.stop();
+      lineupEntry.action = this.createAction(lineupEntry.mixer, clip);
+    }
+
+    if (this.syncAnimations) this.seekNormalized(progress);
   }
 
   public setPlaying(playing: boolean) {
     this.playing = playing;
-    for (const slot of this.slots) {
-      if (slot.action) slot.action.paused = !playing;
-    }
+    for (const action of this.allActions()) action.paused = !playing;
   }
 
   public setLooping(looping: boolean) {
     this.looping = looping;
-    for (const slot of this.slots) {
-      if (!slot.action) continue;
-      slot.action.clampWhenFinished = !looping;
-      slot.action.setLoop(looping ? THREE.LoopRepeat : THREE.LoopOnce, looping ? Infinity : 1);
-    }
+    for (const action of this.allActions()) this.configureLoop(action);
   }
 
   public setAnimationSpeed(speed: number) {
     this.animationSpeed = THREE.MathUtils.clamp(speed, 0.05, 4);
-    for (const slot of this.slots) slot.action?.setEffectiveTimeScale(this.animationSpeed);
+    for (const action of this.allActions()) action.setEffectiveTimeScale(this.animationSpeed);
   }
 
   public seekNormalized(normalized: number) {
     const t = THREE.MathUtils.clamp(normalized, 0, 1);
     if (this.syncAnimations) {
-      for (const slot of this.slots) this.seekSlot(slot, t);
+      for (const slot of this.slots) this.seekAction(slot.mixer, slot.action, t);
+      for (const entry of this.lineup?.roots ?? []) this.seekAction(entry.mixer, entry.action, t);
       return;
     }
 
-    const active = this.slots.find((slot) => slot.asset.id === this.activeAssetId) ?? this.slots[0];
-    if (active) this.seekSlot(active, t);
+    const activeId = this.activeAssetId ?? this.assets[0]?.id;
+    const slot = this.slots.find((entry) => entry.asset.id === activeId);
+    if (slot) this.seekAction(slot.mixer, slot.action, t);
+    const lineupEntry = this.lineup?.roots.find((entry) => entry.asset.id === activeId);
+    if (lineupEntry) this.seekAction(lineupEntry.mixer, lineupEntry.action, t);
   }
 
   public resetCameras() {
@@ -305,11 +308,31 @@ export class CompareSceneManager {
     for (const asset of this.assets) this.disposeAssetRoot(asset.root);
     this.assets = [];
     this.manualScales.clear();
-
     this.renderer.dispose();
-    if (this.renderer.domElement.parentNode) {
-      this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
-    }
+    this.renderer.domElement.remove();
+  }
+
+  private allActions() {
+    return [
+      ...this.slots.map((slot) => slot.action),
+      ...(this.lineup?.roots.map((entry) => entry.action) ?? []),
+    ].filter((action): action is THREE.AnimationAction => Boolean(action));
+  }
+
+  private createAction(mixer: THREE.AnimationMixer, clip: THREE.AnimationClip) {
+    const action = mixer.clipAction(clip);
+    action.reset();
+    action.enabled = true;
+    action.paused = !this.playing;
+    this.configureLoop(action);
+    action.setEffectiveTimeScale(this.animationSpeed);
+    action.play();
+    return action;
+  }
+
+  private configureLoop(action: THREE.AnimationAction) {
+    action.clampWhenFinished = !this.looping;
+    action.setLoop(this.looping ? THREE.LoopRepeat : THREE.LoopOnce, this.looping ? Infinity : 1);
   }
 
   private clampManualScale(scale: number) {
@@ -320,7 +343,6 @@ export class CompareSceneManager {
     root.visible = true;
     root.updateMatrixWorld(true);
     if (root.userData.__assetDoctorCompareGrounded) return;
-
     const bounds = BoundsCalculator.computeAccurateWorldBounds(root);
     if (bounds.isValid && Number.isFinite(bounds.box.min.y)) {
       root.position.y -= bounds.box.min.y;
@@ -338,12 +360,14 @@ export class CompareSceneManager {
     const bounds = boundsResult.isValid ? boundsResult.box.clone() : new THREE.Box3().setFromObject(asset.root);
     const size = bounds.getSize(new THREE.Vector3());
     const radius = Math.max(size.length() * 0.5, 0.05);
-
     this.addGrid(scene, bounds);
 
     const lightingManager = new LightingManager(scene);
     lightingManager.applyPreset(this.lightingPreset);
     const renderModeManager = new RenderModeManager(scene);
+    asset.root.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh) renderModeManager.registerMesh(object as THREE.Mesh);
+    });
     renderModeManager.applyMode(this.renderMode, asset.root);
 
     const camera = new THREE.PerspectiveCamera(45, 1, Math.max(0.001, radius / 1000), Math.max(100, radius * 100));
@@ -353,35 +377,26 @@ export class CompareSceneManager {
     controls.screenSpacePanning = true;
     controls.enabled = false;
 
+    const mixer = asset.animations.length > 0 ? new THREE.AnimationMixer(asset.root) : null;
     const runtime: SlotRuntime = {
       asset,
       scene,
       camera,
       controls,
-      mixer: asset.animations.length > 0 ? new THREE.AnimationMixer(asset.root) : null,
+      mixer,
       action: null,
       bounds,
       radius,
       lightingManager,
       renderModeManager,
     };
-
     this.frameSlot(runtime);
     controls.addEventListener('change', () => this.handleCameraChanged(runtime));
 
-    if (runtime.mixer && asset.animations.length > 0) {
-      const clipIndex = Math.min(Math.max(asset.selectedClipIndex, 0), asset.animations.length - 1);
-      const clip = asset.animations[clipIndex];
-      const action = runtime.mixer.clipAction(clip);
-      action.reset();
-      action.enabled = true;
-      action.paused = !this.playing;
-      action.setLoop(this.looping ? THREE.LoopRepeat : THREE.LoopOnce, this.looping ? Infinity : 1);
-      action.setEffectiveTimeScale(this.animationSpeed);
-      action.play();
-      runtime.action = action;
+    if (mixer && asset.animations.length > 0) {
+      const clipIndex = THREE.MathUtils.clamp(asset.selectedClipIndex, 0, asset.animations.length - 1);
+      runtime.action = this.createAction(mixer, asset.animations[clipIndex]);
     }
-
     return runtime;
   }
 
@@ -416,12 +431,13 @@ export class CompareSceneManager {
   }
 
   private handleCameraChanged(source: SlotRuntime) {
-    if (!this.syncCameras || this.syncingCamera || this.viewMode !== 'grid' || !this.active) return;
+    if (!this.syncCameras || this.syncingCamera || this.viewMode !== 'grid') return;
     this.syncingCamera = true;
     try {
       const sourceCenter = source.controls.target;
-      const normalizedOffset = source.camera.position.clone().sub(sourceCenter).divideScalar(Math.max(source.radius, 1e-6));
-
+      const normalizedOffset = source.camera.position.clone()
+        .sub(sourceCenter)
+        .divideScalar(Math.max(source.radius, 1e-6));
       for (const target of this.slots) {
         if (target === source) continue;
         const center = target.bounds.getCenter(new THREE.Vector3());
@@ -436,31 +452,25 @@ export class CompareSceneManager {
     }
   }
 
-  private rebuildLineup(reframe: boolean) {
-    const previousCamera = !reframe && this.lineup
-      ? {
-          position: this.lineup.camera.position.clone(),
-          target: this.lineup.controls.target.clone(),
-          up: this.lineup.camera.up.clone(),
-        }
-      : null;
+  private cloneAuthoredAsset(asset: CompareAssetRecord) {
+    const slot = this.slots.find((entry) => entry.asset.id === asset.id);
+    if (!slot) return cloneSkeleton(asset.root) as THREE.Group;
+    return slot.renderModeManager.withOriginalMaterials(
+      asset.root,
+      () => cloneSkeleton(asset.root) as THREE.Group
+    );
+  }
 
+  private rebuildLineup(reframe: boolean) {
+    const progress = this.getReferenceNormalizedTime();
     this.clearLineup();
     if (this.assets.length === 0) return;
 
     const scene = this.createScene();
-    const roots: LineupRootRuntime[] = [];
-    let cursorX = 0;
+    const raw: Array<{ asset: CompareAssetRecord; root: THREE.Group; size: THREE.Vector3 }> = [];
     let maxHeight = 0;
-    const raw: Array<{
-      asset: CompareAssetRecord;
-      root: THREE.Group;
-      size: THREE.Vector3;
-    }> = [];
-
     for (const asset of this.assets) {
-      const root = cloneSkeleton(asset.root) as THREE.Group;
-      root.userData.__assetDoctorCompareAssetId = asset.id;
+      const root = this.cloneAuthoredAsset(asset);
       root.updateMatrixWorld(true);
       const bounds = new THREE.Box3().setFromObject(root);
       const size = bounds.getSize(new THREE.Vector3());
@@ -470,13 +480,15 @@ export class CompareSceneManager {
 
     const targetHeight = Math.max(maxHeight, 1);
     const gap = Math.max(targetHeight * 0.18, 0.25);
+    let cursorX = 0;
+    const roots: LineupRootRuntime[] = [];
 
     for (const entry of raw) {
-      const normalizedScale = this.scaleMode === 'normalize-height' && entry.size.y > 1e-6
+      const normalizeScale = this.scaleMode === 'normalize-height' && entry.size.y > 1e-6
         ? targetHeight / entry.size.y
         : 1;
       const manualScale = this.manualScales.get(entry.asset.id) ?? 1;
-      entry.root.scale.multiplyScalar(normalizedScale * manualScale);
+      entry.root.scale.multiplyScalar(normalizeScale * manualScale);
       entry.root.updateMatrixWorld(true);
 
       const scaledBounds = new THREE.Box3().setFromObject(entry.root);
@@ -485,8 +497,15 @@ export class CompareSceneManager {
       entry.root.position.y -= scaledBounds.min.y;
       entry.root.updateMatrixWorld(true);
       cursorX += scaledSize.x + gap;
-      roots.push({ assetId: entry.asset.id, root: entry.root });
       scene.add(entry.root);
+
+      const mixer = entry.asset.animations.length > 0 ? new THREE.AnimationMixer(entry.root) : null;
+      let action: THREE.AnimationAction | null = null;
+      if (mixer) {
+        const clipIndex = THREE.MathUtils.clamp(entry.asset.selectedClipIndex, 0, entry.asset.animations.length - 1);
+        action = this.createAction(mixer, entry.asset.animations[clipIndex]);
+      }
+      roots.push({ asset: entry.asset, root: entry.root, mixer, action });
     }
 
     const combined = new THREE.Box3();
@@ -496,7 +515,12 @@ export class CompareSceneManager {
     const lightingManager = new LightingManager(scene);
     lightingManager.applyPreset(this.lightingPreset);
     const renderModeManager = new RenderModeManager(scene);
-    for (const entry of roots) renderModeManager.applyMode(this.renderMode, entry.root);
+    for (const entry of roots) {
+      entry.root.traverse((object) => {
+        if ((object as THREE.Mesh).isMesh) renderModeManager.registerMesh(object as THREE.Mesh);
+      });
+      renderModeManager.applyMode(this.renderMode, entry.root);
+    }
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
     const controls = new OrbitControls(camera, this.renderer.domElement);
@@ -505,14 +529,9 @@ export class CompareSceneManager {
     controls.screenSpacePanning = true;
 
     this.lineup = { scene, camera, controls, roots, lightingManager, renderModeManager };
-    if (previousCamera) {
-      camera.position.copy(previousCamera.position);
-      camera.up.copy(previousCamera.up);
-      controls.target.copy(previousCamera.target);
-      controls.update();
-    } else {
-      this.frameLineup();
-    }
+    this.seekNormalized(progress);
+    if (reframe) this.frameLineup();
+    else this.frameLineup();
     this.updateControlEnablement();
   }
 
@@ -532,43 +551,92 @@ export class CompareSceneManager {
     this.lineup.controls.update();
   }
 
-  private seekSlot(slot: SlotRuntime, normalized: number) {
-    if (!slot.action || !slot.mixer) return;
-    const duration = slot.action.getClip().duration;
-    const target = normalized * duration;
-    const paused = slot.action.paused;
-    slot.action.paused = false;
-    slot.action.time = target;
-    slot.mixer.update(0);
-    slot.action.paused = paused;
+  private seekAction(
+    mixer: THREE.AnimationMixer | null,
+    action: THREE.AnimationAction | null,
+    normalized: number
+  ) {
+    if (!action || !mixer) return;
+    const duration = Math.max(action.getClip().duration, 1e-6);
+    const paused = action.paused;
+    action.paused = false;
+    action.time = THREE.MathUtils.clamp(normalized, 0, 1) * duration;
+    mixer.update(0);
+    action.paused = paused;
+  }
+
+  private getReferenceSlot() {
+    return this.slots.find((slot) => slot.asset.id === this.activeAssetId && slot.action)
+      ?? this.slots.find((slot) => slot.action)
+      ?? null;
   }
 
   private getReferenceNormalizedTime() {
-    const active = this.slots.find((slot) => slot.asset.id === this.activeAssetId && slot.action) ??
-      this.slots.find((slot) => slot.action);
-    if (!active?.action) return 0;
-    const duration = Math.max(active.action.getClip().duration, 1e-6);
-    return THREE.MathUtils.clamp(active.action.time / duration, 0, 1);
+    const reference = this.getReferenceSlot();
+    if (!reference?.action) return 0;
+    const duration = Math.max(reference.action.getClip().duration, 1e-6);
+    return THREE.MathUtils.clamp(reference.action.time / duration, 0, 1);
   }
 
-  private handlePointerDown(event: PointerEvent) {
-    if (!this.active) return;
+  private advanceAnimations(delta: number) {
+    if (!this.playing) return;
 
-    if (this.viewMode === 'lineup') {
-      const assetId = this.pickLineupAsset(event.clientX, event.clientY);
-      if (!assetId) return;
-      this.activeAssetId = assetId;
-      this.callbacks.onActiveAssetChange?.(assetId);
+    if (!this.syncAnimations) {
+      for (const slot of this.slots) slot.mixer?.update(delta);
+      for (const entry of this.lineup?.roots ?? []) entry.mixer?.update(delta);
       return;
     }
 
+    const reference = this.getReferenceSlot();
+    if (!reference?.mixer || !reference.action) return;
+    reference.mixer.update(delta);
+    const normalized = this.getReferenceNormalizedTime();
+
+    // Sync means phase sync, not equal elapsed seconds. A 2 s Walk and a 4 s
+    // Walk therefore remain at the same normalized pose throughout playback.
+    for (const slot of this.slots) {
+      if (slot !== reference) this.seekAction(slot.mixer, slot.action, normalized);
+    }
+    for (const entry of this.lineup?.roots ?? []) {
+      this.seekAction(entry.mixer, entry.action, normalized);
+    }
+  }
+
+  private hitGrid(event: MouseEvent | PointerEvent) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const yFromBottom = rect.bottom - event.clientY;
-    const layout = this.currentLayout(rect.width, rect.height);
-    const hit = layout.find((cell) => x >= cell.x && x <= cell.x + cell.width && yFromBottom >= cell.y && yFromBottom <= cell.y + cell.height);
-    if (!hit) return;
+    return this.currentLayout(rect.width, rect.height).find(
+      (cell) => x >= cell.x && x <= cell.x + cell.width && yFromBottom >= cell.y && yFromBottom <= cell.y + cell.height
+    );
+  }
 
+  private hitLineupAsset(event: MouseEvent | PointerEvent | WheelEvent): CompareAssetRecord | null {
+    if (!this.lineup) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.x = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1;
+    this.pointer.y = -((event.clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.lineup.camera);
+    const hits = this.raycaster.intersectObjects(this.lineup.roots.map((entry) => entry.root), true);
+    for (const hit of hits) {
+      let current: THREE.Object3D | null = hit.object;
+      while (current) {
+        const entry = this.lineup.roots.find((candidate) => candidate.root === current);
+        if (entry) return entry.asset;
+        current = current.parent;
+      }
+    }
+    return null;
+  }
+
+  private handlePointerDown(event: PointerEvent) {
+    if (this.viewMode === 'lineup') {
+      const asset = this.hitLineupAsset(event);
+      if (asset) this.setActiveAssetId(asset.id);
+      return;
+    }
+    const hit = this.hitGrid(event);
+    if (!hit) return;
     const asset = this.assets[hit.index];
     if (!asset) return;
     this.activeAssetId = asset.id;
@@ -577,16 +645,15 @@ export class CompareSceneManager {
   }
 
   private handleDoubleClick(event: MouseEvent) {
-    if (!this.active || this.viewMode === 'lineup') return;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const yFromBottom = rect.bottom - event.clientY;
-    const layout = this.currentLayout(rect.width, rect.height);
-    const hit = layout.find((cell) => x >= cell.x && x <= cell.x + cell.width && yFromBottom >= cell.y && yFromBottom <= cell.y + cell.height);
+    if (this.viewMode === 'lineup') {
+      const asset = this.hitLineupAsset(event);
+      if (asset) this.setActiveAssetId(asset.id);
+      return;
+    }
+    const hit = this.hitGrid(event);
     if (!hit) return;
     const asset = this.assets[hit.index];
     if (!asset) return;
-
     const next = this.soloAssetId === asset.id ? null : asset.id;
     this.soloAssetId = next;
     this.callbacks.onSoloRequest?.(next);
@@ -594,49 +661,21 @@ export class CompareSceneManager {
   }
 
   private handleWheel(event: WheelEvent) {
-    if (!this.active || this.viewMode !== 'lineup' || !event.altKey) return;
-    const assetId = this.pickLineupAsset(event.clientX, event.clientY);
-    if (!assetId) return;
-
+    if (this.viewMode !== 'lineup' || !event.altKey) return;
+    const asset = this.hitLineupAsset(event);
+    if (!asset) return;
     event.preventDefault();
-    event.stopPropagation();
-    this.activeAssetId = assetId;
-    this.callbacks.onActiveAssetChange?.(assetId);
-
-    const current = this.manualScales.get(assetId) ?? 1;
-    const factor = Math.exp(-event.deltaY * 0.0015);
-    this.setManualScale(assetId, current * factor, false);
-  }
-
-  private pickLineupAsset(clientX: number, clientY: number): string | null {
-    if (!this.lineup) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-
-    this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.pointer, this.lineup.camera);
-    const intersections = this.raycaster.intersectObjects(
-      this.lineup.roots.map((entry) => entry.root),
-      true
-    );
-
-    for (const intersection of intersections) {
-      let node: THREE.Object3D | null = intersection.object;
-      while (node) {
-        const id = node.userData.__assetDoctorCompareAssetId as string | undefined;
-        if (id) return id;
-        node = node.parent;
-      }
-    }
-    return null;
+    const current = this.manualScales.get(asset.id) ?? 1;
+    const factor = event.deltaY < 0 ? 1.05 : 1 / 1.05;
+    this.setManualScale(asset.id, current * factor, false);
+    this.setActiveAssetId(asset.id);
   }
 
   private currentLayout(width: number, height: number): CompareViewportRect[] {
     const soloIndex = this.soloAssetId
       ? this.assets.findIndex((asset) => asset.id === this.soloAssetId)
-      : null;
-    return computeCompareLayout(this.assets.length, width, height, soloIndex !== null && soloIndex >= 0 ? soloIndex : null);
+      : -1;
+    return computeCompareLayout(this.assets.length, width, height, soloIndex >= 0 ? soloIndex : null);
   }
 
   private updateControlEnablement(forcedIndex?: number) {
@@ -651,7 +690,6 @@ export class CompareSceneManager {
       activeIndex = this.assets.findIndex((asset) => asset.id === this.activeAssetId);
     }
     if (activeIndex === undefined || activeIndex < 0) activeIndex = 0;
-
     const soloIndex = this.soloAssetId
       ? this.assets.findIndex((asset) => asset.id === this.soloAssetId)
       : -1;
@@ -675,14 +713,11 @@ export class CompareSceneManager {
       const width = this.container.clientWidth || 1;
       const height = this.container.clientHeight || 1;
       const canvas = this.renderer.domElement;
-      if (canvas.width === 0 || canvas.height === 0 || canvas.clientWidth !== width || canvas.clientHeight !== height) {
+      if (canvas.clientWidth !== width || canvas.clientHeight !== height) {
         this.renderer.setSize(width, height, false);
       }
 
-      if (this.playing) {
-        for (const slot of this.slots) slot.mixer?.update(delta);
-      }
-
+      this.advanceAnimations(delta);
       for (const slot of this.slots) slot.controls.update();
       this.lineup?.controls.update();
 
@@ -697,8 +732,7 @@ export class CompareSceneManager {
         this.renderer.setScissor(0, 0, width, height);
         this.renderer.render(this.lineup.scene, this.lineup.camera);
       } else {
-        const layout = this.currentLayout(width, height);
-        for (const cell of layout) {
+        for (const cell of this.currentLayout(width, height)) {
           const slot = this.slots[cell.index];
           if (!slot) continue;
           slot.camera.aspect = Math.max(cell.width, 1) / Math.max(cell.height, 1);
@@ -708,7 +742,6 @@ export class CompareSceneManager {
           this.renderer.render(slot.scene, slot.camera);
         }
       }
-
       this.renderer.setScissorTest(false);
 
       const now = performance.now();
@@ -724,6 +757,7 @@ export class CompareSceneManager {
     for (const slot of this.slots) {
       slot.controls.dispose();
       slot.mixer?.stopAllAction();
+      if (slot.mixer) slot.mixer.uncacheRoot(slot.asset.root);
       slot.renderModeManager.resetAll(slot.asset.root);
       slot.renderModeManager.dispose();
       slot.lightingManager.dispose();
@@ -735,25 +769,29 @@ export class CompareSceneManager {
 
   private clearLineup() {
     if (!this.lineup) return;
-    this.lineup.controls.dispose();
-    for (const entry of this.lineup.roots) {
-      this.lineup.renderModeManager.resetAll(entry.root);
-      this.lineup.scene.remove(entry.root);
+    const lineup = this.lineup;
+    lineup.controls.dispose();
+    for (const entry of lineup.roots) {
+      entry.mixer?.stopAllAction();
+      if (entry.mixer) entry.mixer.uncacheRoot(entry.root);
+      lineup.renderModeManager.resetAll(entry.root);
+      lineup.scene.remove(entry.root);
+      entry.root.clear();
     }
-    this.lineup.renderModeManager.dispose();
-    this.lineup.lightingManager.dispose();
-    this.disposeSceneHelpers(this.lineup.scene);
+    lineup.renderModeManager.dispose();
+    lineup.lightingManager.dispose();
+    this.disposeSceneHelpers(lineup.scene);
     this.lineup = null;
   }
 
   private disposeSceneHelpers(scene: THREE.Scene) {
     scene.traverse((object) => {
-      if (object.name !== '__asset_doctor_compare_grid') return;
-      const grid = object as THREE.GridHelper;
-      grid.geometry.dispose();
-      const material = grid.material;
-      if (Array.isArray(material)) material.forEach((value) => value.dispose());
-      else material.dispose();
+      if ((object as THREE.GridHelper).isGridHelper) {
+        (object as THREE.GridHelper).geometry.dispose();
+        const material = (object as THREE.GridHelper).material;
+        if (Array.isArray(material)) material.forEach((value) => value.dispose());
+        else material.dispose();
+      }
     });
   }
 
@@ -761,7 +799,6 @@ export class CompareSceneManager {
     const geometries = new Set<THREE.BufferGeometry>();
     const materials = new Set<THREE.Material>();
     const textures = new Set<THREE.Texture>();
-
     root.traverse((object) => {
       if (!(object as THREE.Mesh).isMesh) return;
       const mesh = object as THREE.Mesh;
@@ -775,7 +812,6 @@ export class CompareSceneManager {
         }
       }
     });
-
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());
     textures.forEach((texture) => texture.dispose());
