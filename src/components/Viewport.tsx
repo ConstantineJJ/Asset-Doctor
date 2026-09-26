@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Columns3, FileUp, Loader2 } from 'lucide-react';
-import type { LightingPreset, RenderMode } from '../types';
-import type { CompareAssetRecord, CompareSessionSnapshot } from '../compare/CompareTypes';
+import type { RenderMode } from '../types';
+import type { CompareAssetRecord } from '../compare/CompareTypes';
 import { CompareViewport } from './CompareViewport';
 
 interface ViewportProps {
@@ -10,13 +10,8 @@ interface ViewportProps {
   isLoading: boolean;
   fileName?: string;
   renderMode: RenderMode;
-  lightingPreset: LightingPreset;
   triangleCount: number;
   modelHeight: number;
-  compareOpen: boolean;
-  onCompareOpenChange: (open: boolean) => void;
-  onCompareSnapshotChange: (snapshot: CompareSessionSnapshot) => void;
-  onOpenCompareAssetInDoctor: (asset: CompareAssetRecord) => void;
 }
 
 export const Viewport: React.FC<ViewportProps> = ({
@@ -25,16 +20,12 @@ export const Viewport: React.FC<ViewportProps> = ({
   isLoading,
   fileName,
   renderMode,
-  lightingPreset,
   triangleCount,
   modelHeight,
-  compareOpen,
-  onCompareOpenChange,
-  onCompareSnapshotChange,
-  onOpenCompareAssetInDoctor,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -67,6 +58,16 @@ export const Viewport: React.FC<ViewportProps> = ({
     }
   };
 
+  const openCompareAssetInDoctor = (asset: CompareAssetRecord) => {
+    if (!asset.sourceBuffer) return;
+    const mime = asset.fileName.toLowerCase().endsWith('.gltf')
+      ? 'model/gltf+json'
+      : 'model/gltf-binary';
+    const file = new File([asset.sourceBuffer], asset.fileName, { type: mime });
+    onFileDrop(file);
+    setCompareOpen(false);
+  };
+
   return (
     <div
       ref={containerRef}
@@ -88,7 +89,7 @@ export const Viewport: React.FC<ViewportProps> = ({
 
       {!compareOpen && (
         <button
-          onClick={() => onCompareOpenChange(true)}
+          onClick={() => setCompareOpen(true)}
           className="absolute top-3 right-3 z-20 flex items-center gap-2 rounded-md border border-cyan-800 bg-cyan-950/35 px-4 py-2 text-xs font-semibold text-cyan-100 shadow-lg backdrop-blur-xs transition hover:border-cyan-600 hover:bg-cyan-950/55"
           title="Open persistent Multi-Asset Compare workspace"
         >
@@ -144,15 +145,14 @@ export const Viewport: React.FC<ViewportProps> = ({
         </div>
       )}
 
-      {/* Kept mounted even while hidden so Compare retains its models, camera
-          adjustments, manual Lineup sizes and selected clips while Doctor is open. */}
+      {/* Compare stays mounted even while hidden. This is the session memory:
+          loaded models, clip choices, camera tuning and manual Lineup scales survive
+          Doctor → Compare → Doctor → Compare without reparsing or losing state. */}
       <CompareViewport
         open={compareOpen}
-        onClose={() => onCompareOpenChange(false)}
-        onOpenInDoctor={onOpenCompareAssetInDoctor}
-        onSnapshotChange={onCompareSnapshotChange}
+        onClose={() => setCompareOpen(false)}
+        onOpenInDoctor={openCompareAssetInDoctor}
         renderMode={renderMode}
-        lightingPreset={lightingPreset}
       />
     </div>
   );
