@@ -1,6 +1,7 @@
 import { runSyntheticTopologyTests } from '../src/analysis/SyntheticTopologyTests';
 import { runDiagnosticCoreTests } from '../src/analysis/DiagnosticCoreTests';
 import { runDiagnosticCoverageTests } from '../src/analysis/DiagnosticCoverageTests';
+import { runCompareLayoutTests } from '../src/compare/CompareLayoutTests';
 import {
   runSurgicalHealIntegrationTests,
   runSurgicalHealTests,
@@ -11,6 +12,7 @@ async function main() {
     ...runSyntheticTopologyTests(),
     ...runDiagnosticCoreTests(),
     ...runDiagnosticCoverageTests(),
+    ...runCompareLayoutTests(),
     ...runSurgicalHealTests(),
     ...(await runSurgicalHealIntegrationTests()),
   ];
