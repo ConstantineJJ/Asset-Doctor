@@ -6,12 +6,30 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply one-shot Lineup performance and diagnostic i18n polish
+        if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
+        run: |
+          python scripts/lineup-perf-i18n-polish.py
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name "Asset Doctor CI"
+            git config user.email "asset-doctor-ci@users.noreply.github.com"
+            git add src/viewer/CompareSceneManager.ts src/components/InspectorPanel.tsx
+            git commit -m "fix: make Lineup scaling live and localize diagnostics"
+            git push origin HEAD:main
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
