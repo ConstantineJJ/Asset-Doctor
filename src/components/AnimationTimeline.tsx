@@ -1,14 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
-  FastForward,
   Film,
   Play,
   Repeat,
-  RotateCcw,
   Square,
-  Zap,
 } from 'lucide-react';
 import type { AnimationClipInfo } from '../types';
 
@@ -49,16 +46,37 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
   showRootMotion,
   onToggleRootMotion,
 }) => {
+  // App historically registered Space with an effect that only depended on the
+  // render mode, so its closure could retain an old isPlaying value. Capture the
+  // shortcut here, where React always supplies the current callback, and stop the
+  // older bubbling listener from running a second toggle.
+  useEffect(() => {
+    if (!clips || clips.length === 0) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== ' ') return;
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        (event.target instanceof HTMLElement && event.target.isContentEditable)
+      ) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onTogglePlay();
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [clips?.length, onTogglePlay]);
+
   if (!clips || clips.length === 0) return null;
 
   const activeClip = clips[activeClipIndex];
   const progress = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
-
   const speeds = [0.25, 0.5, 1.0, 2.0];
 
   return (
     <div className="h-12 bg-[#17191e] border-t border-[#262932] px-4 flex items-center justify-between text-xs text-gray-200 select-none shrink-0 z-20">
-      {/* Left: Clip Selector & Root Motion Badge */}
       <div className="flex items-center space-x-3 min-w-[200px]">
         <div className="flex items-center space-x-1.5 bg-[#1f2228] px-2 py-1 rounded border border-[#2d313a]">
           <Film className="w-3.5 h-3.5 text-purple-400" />
@@ -99,9 +117,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
         )}
       </div>
 
-      {/* Center: Playback Controls & Timeline Scrubber */}
       <div className="flex items-center space-x-3 flex-1 max-w-xl mx-4">
-        {/* Buttons */}
         <div className="flex items-center space-x-1">
           <button
             onClick={() => onStepFrame(false)}
@@ -154,12 +170,10 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
           </button>
         </div>
 
-        {/* Time Slider */}
         <div className="flex items-center space-x-2 flex-1">
           <span className="font-mono text-[10px] text-gray-400 w-10 text-right">
             {currentTime.toFixed(2)}s
           </span>
-
           <input
             id="timeline-scrubber"
             type="range"
@@ -170,14 +184,12 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
             onInput={(e) => onSeek(Number((e.target as HTMLInputElement).value))}
             className="flex-1 h-1.5 accent-cyan-400 cursor-pointer bg-[#262932] rounded"
           />
-
           <span className="font-mono text-[10px] text-gray-400 w-10">
             {duration.toFixed(2)}s
           </span>
         </div>
       </div>
 
-      {/* Right: Speed Controls */}
       <div className="flex items-center space-x-1">
         <span className="text-[10px] text-gray-400 hidden sm:inline mr-1">Speed:</span>
         <div className="flex bg-[#1e2127] p-0.5 rounded border border-[#2d313a]">
