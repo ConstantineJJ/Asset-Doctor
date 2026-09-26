@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, FileUp, Loader2, Maximize2, Orbit } from 'lucide-react';
+import { Box, Columns3, FileUp, Loader2 } from 'lucide-react';
 import type { RenderMode } from '../types';
+import { CompareViewport } from './CompareViewport';
 
 interface ViewportProps {
   onCanvasMount: (container: HTMLElement) => void | (() => void);
@@ -23,6 +24,7 @@ export const Viewport: React.FC<ViewportProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -32,7 +34,7 @@ export const Viewport: React.FC<ViewportProps> = ({
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragOver(true);
+    if (!compareOpen) setIsDragOver(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
@@ -45,6 +47,7 @@ export const Viewport: React.FC<ViewportProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
+    if (compareOpen) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
@@ -81,8 +84,21 @@ export const Viewport: React.FC<ViewportProps> = ({
         </div>
       )}
 
+      {/* Compare is intentionally a separate view-only workspace. It does not
+          duplicate Health/Heal panels or mutate the active Doctor asset. */}
+      {!compareOpen && (
+        <button
+          onClick={() => setCompareOpen(true)}
+          className="absolute top-3 right-3 z-20 flex items-center gap-1.5 rounded border border-[#39414d] bg-[#191c22]/90 px-2.5 py-1 text-[10px] font-medium text-gray-300 shadow-md backdrop-blur-xs transition hover:border-cyan-800 hover:text-cyan-200"
+          title="Compare 2–5 models in one viewport"
+        >
+          <Columns3 className="h-3.5 w-3.5 text-cyan-400" />
+          Compare 2–5
+        </button>
+      )}
+
       {/* Subtle model-height ruler. Uses real asset units (glTF meters). */}
-      {modelHeight > 0 && (
+      {modelHeight > 0 && !compareOpen && (
         <div
           className="absolute right-3 top-1/2 -translate-y-1/2 z-10 h-36 w-12 pointer-events-none text-[9px] font-mono text-gray-400"
           title={`Model height: ${modelHeight.toFixed(3)} m`}
@@ -108,23 +124,25 @@ export const Viewport: React.FC<ViewportProps> = ({
       {/* Orientation gizmo is injected by SceneManager so it follows the live camera. */}
 
       {/* Bottom Left Navigation Hints */}
-      <div className="absolute bottom-3 left-3 z-10 hidden md:flex items-center space-x-1.5 pointer-events-none text-[10px] text-gray-400 font-mono">
-        <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
-          L-Click: Orbit
-        </span>
-        <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
-          R-Click: Pan
-        </span>
-        <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
-          Scroll: Zoom
-        </span>
-        <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
-          Click Mesh: Select
-        </span>
-      </div>
+      {!compareOpen && (
+        <div className="absolute bottom-3 left-3 z-10 hidden md:flex items-center space-x-1.5 pointer-events-none text-[10px] text-gray-400 font-mono">
+          <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
+            L-Click: Orbit
+          </span>
+          <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
+            R-Click: Pan
+          </span>
+          <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
+            Scroll: Zoom
+          </span>
+          <span className="bg-[#181a20]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-[#2c303a]">
+            Click Mesh: Select
+          </span>
+        </div>
+      )}
 
       {/* Drag & Drop Overlay */}
-      {isDragOver && (
+      {isDragOver && !compareOpen && (
         <div className="absolute inset-0 z-40 bg-blue-950/70 backdrop-blur-xs border-4 border-dashed border-cyan-400 flex flex-col items-center justify-center text-white pointer-events-none transition-all">
           <FileUp className="w-12 h-12 text-cyan-400 mb-2 animate-bounce" />
           <h3 className="text-lg font-bold">Drop GLB / GLTF Asset Here</h3>
@@ -135,12 +153,14 @@ export const Viewport: React.FC<ViewportProps> = ({
       )}
 
       {/* Loading Overlay */}
-      {isLoading && (
+      {isLoading && !compareOpen && (
         <div className="absolute inset-0 z-30 bg-[#131518]/80 backdrop-blur-xs flex flex-col items-center justify-center text-gray-200 pointer-events-none">
           <Loader2 className="w-8 h-8 text-cyan-400 animate-spin mb-2" />
           <span className="text-xs font-medium">Parsing 3D Asset Buffers...</span>
         </div>
       )}
+
+      {compareOpen && <CompareViewport onClose={() => setCompareOpen(false)} />}
     </div>
   );
 };
