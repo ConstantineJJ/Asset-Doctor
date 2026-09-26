@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { RenderMode } from '../types';
+import { getAuthoredMaterialSet } from './AuthoredMaterialState';
 
 /**
  * Presentation-only render modes.
@@ -22,9 +23,13 @@ export class RenderModeManager {
   }
 
   public registerMesh(mesh: THREE.Mesh) {
-    if (!this.originalMaterials.has(mesh)) {
-      this.originalMaterials.set(mesh, mesh.material);
-    }
+    if (this.originalMaterials.has(mesh)) return;
+    const authored = getAuthoredMaterialSet(mesh) ?? mesh.material;
+    this.originalMaterials.set(mesh, authored);
+    // SceneManager historically applied visibility/two-sided presentation tweaks
+    // before registration. Replacing the material set here restores the exact
+    // authored snapshot captured by GLBLoaderService.
+    mesh.material = authored;
   }
 
   public getMode(): RenderMode {
@@ -38,7 +43,7 @@ export class RenderModeManager {
       if (!(object as THREE.Mesh).isMesh) return;
       const mesh = object as THREE.Mesh;
       current.set(mesh, mesh.material);
-      const original = this.originalMaterials.get(mesh);
+      const original = this.originalMaterials.get(mesh) ?? getAuthoredMaterialSet(mesh);
       if (original) mesh.material = original;
     });
     try {
@@ -110,7 +115,7 @@ export class RenderModeManager {
     root.traverse((object) => {
       if (!(object as THREE.Mesh).isMesh) return;
       const mesh = object as THREE.Mesh;
-      const original = this.originalMaterials.get(mesh);
+      const original = this.originalMaterials.get(mesh) ?? getAuthoredMaterialSet(mesh);
       if (original) mesh.material = original;
     });
   }
@@ -123,7 +128,7 @@ export class RenderModeManager {
   private channelMaterial(
     texture: THREE.Texture | null | undefined,
     scalar: number,
-    channel: 'g' | 'b'
+    channel: 'r' | 'g' | 'b'
   ): THREE.Material {
     if (!texture) {
       return this.track(new THREE.MeshBasicMaterial({
@@ -172,7 +177,7 @@ export class RenderModeManager {
       if (!(obj as THREE.Mesh).isMesh) return;
 
       const mesh = obj as THREE.Mesh;
-      if (!this.originalMaterials.has(mesh)) this.originalMaterials.set(mesh, mesh.material);
+      if (!this.originalMaterials.has(mesh)) this.registerMesh(mesh);
       const original = this.originalMaterials.get(mesh)!;
       const source = this.sourceMaterial(original);
       mesh.frustumCulled = false;
@@ -244,7 +249,7 @@ export class RenderModeManager {
           break;
 
         case 'ao':
-          mesh.material = this.channelMaterial(source?.aoMap, source?.aoMapIntensity ?? 1, 'r' as 'g');
+          mesh.material = this.channelMaterial(source?.aoMap, source?.aoMapIntensity ?? 1, 'r');
           break;
 
         case 'emissive':
