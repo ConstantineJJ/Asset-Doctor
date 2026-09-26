@@ -23,6 +23,7 @@ export class GLBLoaderService {
   private dracoLoader: DRACOLoader | null = null;
   private readonly loadingManager: THREE.LoadingManager;
   private activeResourceErrors: string[] = [];
+  private loadSequence: Promise<void> = Promise.resolve();
 
   constructor() {
     this.loadingManager = new THREE.LoadingManager();
@@ -42,7 +43,16 @@ export class GLBLoaderService {
     }
   }
 
-  public async loadFromFile(file: File): Promise<LoadedModelResult> {
+  public loadFromFile(file: File): Promise<LoadedModelResult> {
+    // LoadingManager and GLTFLoader are stateful. More importantly, two user
+    // selections must never race so that a slower old file replaces the newer
+    // choice. Serializing requests guarantees completion order == selection order.
+    const task = this.loadSequence.then(() => this.loadFromFileNow(file));
+    this.loadSequence = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  private async loadFromFileNow(file: File): Promise<LoadedModelResult> {
     const startedAt = nowMs();
     const arrayBuffer = await file.arrayBuffer();
     const sourceAudit = auditGltfSource(arrayBuffer);
@@ -88,6 +98,7 @@ export class GLBLoaderService {
           // Snapshot authored material state before SceneManager applies any
           // viewport-only visibility/culling/presentation adjustments.
           captureAuthoredMaterials(root);
+          root.userData.__assetDoctorSourceAudit = sourceAudit;
           sourceAudit.resourceErrors = [...this.activeResourceErrors];
 
           resolve({
