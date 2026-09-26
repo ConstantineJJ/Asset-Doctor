@@ -7,6 +7,12 @@ import {
   type RepairedExportResult,
 } from './RepairedExportService';
 
+function attributeVersion(attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute) {
+  return (attribute as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute
+    ? (attribute as THREE.InterleavedBufferAttribute).data.version
+    : (attribute as THREE.BufferAttribute).version;
+}
+
 function repairedMeshFingerprint(root: THREE.Object3D, reports: HealOperationReport[]) {
   const ids = new Set(reports.map((report) => report.meshUuid));
   const parts: string[] = [];
@@ -15,18 +21,18 @@ function repairedMeshFingerprint(root: THREE.Object3D, reports: HealOperationRep
     const mesh = object as THREE.Mesh;
     const geometry = mesh.geometry;
     const attrs = Object.entries(geometry.attributes)
-      .map(([name, attr]) => `${name}:${attr.count}:${attr.itemSize}:${attr.version}`)
+      .map(([name, attr]) => `${name}:${attr.count}:${attr.itemSize}:${attributeVersion(attr)}`)
       .sort()
       .join(',');
     const morphs = Object.entries(geometry.morphAttributes)
-      .map(([name, values]) => `${name}:${values.map((value) => `${value.count}:${value.itemSize}:${value.version}`).join('/')}`)
+      .map(([name, values]) => `${name}:${values.map((value) => `${value.count}:${value.itemSize}:${attributeVersion(value)}`).join('/')}`)
       .sort()
       .join(',');
     parts.push([
       mesh.uuid,
       geometry.uuid,
       geometry.index?.count ?? -1,
-      geometry.index?.version ?? -1,
+      geometry.index ? attributeVersion(geometry.index) : -1,
       attrs,
       morphs,
     ].join('|'));
