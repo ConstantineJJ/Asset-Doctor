@@ -37,7 +37,10 @@ export class GLBLoaderService {
     // into dist/draco for production/Tauri, so model loading needs no CDN/network.
     try {
       this.dracoLoader = new DRACOLoader(this.loadingManager);
-      this.dracoLoader.setDecoderPath(new URL('draco/', window.location.href).href);
+      const decoderPath = typeof window !== 'undefined'
+        ? new URL('draco/', window.location.href).href
+        : './draco/';
+      this.dracoLoader.setDecoderPath(decoderPath);
       this.gltfLoader.setDRACOLoader(this.dracoLoader);
     } catch (e) {
       console.warn('DRACOLoader initialization notice:', e);
