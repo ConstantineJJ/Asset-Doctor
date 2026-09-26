@@ -97,11 +97,11 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       category: 'Topology',
       severity: 'WARNING',
       layer: 'Health',
-      title: `Non-manifold edges: ${totalNonManifold}`,
-      description: `${totalNonManifold} edge(s) are shared by more than two faces. This can be problematic for watertight solids, printing, collision hulls or some mesh processing operations.`,
+      title: `Non-manifold index edges: ${totalNonManifold}`,
+      description: `${totalNonManifold} indexed edge(s) are shared by more than two faces. This is an index-connectivity finding; inspect the spatial surface before deciding whether the authored geometry is invalid.`,
       count: totalNonManifold,
       repairability: 'MANUAL',
-      technicalDetails: 'Edge shared by > 2 triangles.',
+      technicalDetails: 'Indexed edge shared by > 2 triangles.',
       suggestedAction: 'Manual repair recommended. Inspect the affected edge fan and decide the intended surface connectivity before editing topology.',
       ...localize((s) => s.nonManifoldEdges, 'nonManifold'),
     });
@@ -110,8 +110,8 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       id: 'topo-non-manifold-ok',
       category: 'Topology',
       severity: 'OK',
-      title: 'No non-manifold shared edges',
-      description: 'No edges shared by more than 2 faces were detected.',
+      title: 'No non-manifold index edges',
+      description: 'No indexed edges shared by more than 2 faces were detected.',
     });
   }
 
@@ -120,12 +120,12 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       id: 'topo-boundary-edges',
       category: 'Topology',
       severity: 'INFO',
-      title: `Boundary / open edges: ${totalBoundary}`,
-      description: `${totalBoundary} edge(s) belong to only one triangle. This is expected for planar decals, hair cards or open shells; inspect only if the model is intended to be watertight.`,
+      title: `Index-boundary edges: ${totalBoundary}`,
+      description: `${totalBoundary} edge(s) belong to only one triangle in the indexed vertex graph. This is not proof of a geometric hole: glTF commonly duplicates positions at UV seams, material splits and hard-normal boundaries.`,
       count: totalBoundary,
       repairability: 'MANUAL',
-      technicalDetails: 'Single-triangle incident edges.',
-      suggestedAction: 'Manual repair recommended only when the asset is intended to be watertight. Open shells, cards, clothing edges and decals may be intentional.',
+      technicalDetails: 'Single-triangle incident edges in index connectivity; spatially coincident seam vertices remain distinct.',
+      suggestedAction: 'Inspect the spatial surface only if watertight geometry is required. Confirm a real geometric opening before changing topology; do not weld attribute seams merely to reduce this count.',
       ...localize((s) => s.boundaryEdges, 'boundary'),
     });
   } else {
@@ -133,8 +133,8 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       id: 'topo-watertight-ok',
       category: 'Topology',
       severity: 'OK',
-      title: 'No open boundary edges',
-      description: 'Zero open boundary edges were detected.',
+      title: 'No index-boundary edges',
+      description: 'No single-triangle incident edges were found in index connectivity.',
     });
   }
 
@@ -144,11 +144,11 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       category: 'Topology',
       severity: 'WARNING',
       layer: 'Health',
-      title: `Isolated vertices: ${totalIsolated}`,
+      title: `Unreferenced vertices: ${totalIsolated}`,
       description: `${totalIsolated} vertex position(s) exist in the buffer but are not referenced by any indexed face.`,
       count: totalIsolated,
       ratio: ratio(totalIsolated, totalVertices),
-      technicalDetails: 'Unindexed positions in vertex array.',
+      technicalDetails: 'Unreferenced positions in the indexed vertex buffer.',
       ...localize((s) => s.isolatedVertices, 'isolated'),
     });
   }
@@ -159,12 +159,12 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       category: 'Topology',
       severity: 'WARNING',
       layer: 'Health',
-      title: `Tiny floating components: ${totalTinyComponents}`,
-      description: `${totalTinyComponents} disconnected geometry component(s) contain a very small fraction of the mesh. They may be intentional detail or leftover debris.`,
+      title: `Tiny index-connected components: ${totalTinyComponents}`,
+      description: `${totalTinyComponents} small component(s) were found in index connectivity. Attribute seams can split a visually continuous surface into several index components, so this is not automatically floating debris.`,
       count: totalTinyComponents,
       ratio: ratio(totalTinyComponents, totalComponents),
       repairability: 'MANUAL',
-      suggestedAction: 'Manual repair recommended. Confirm each component is unwanted debris before deleting it; small detached details may be intentional.',
+      suggestedAction: 'Manual review recommended. Confirm that a component is spatially detached and unwanted before deleting or welding it.',
       ...localize((s) => s.tinyComponentsCount, 'tinyComponent'),
     });
   }
@@ -252,7 +252,6 @@ export function evaluateSkinningIssues(
     count: stats.totalBones,
   });
 
-  // Max influences per vertex
   if (stats.maxInfluencesPerVertex > profile.maxBoneInfluencesWarning) {
     issues.push({
       id: 'skin-max-influences',
@@ -272,7 +271,6 @@ export function evaluateSkinningIssues(
     });
   }
 
-  // Zero weight vertices
   if (stats.zeroWeightVertices > 0) {
     const first = stats.zeroWeightLocations?.[0];
     issues.push({
@@ -296,7 +294,6 @@ export function evaluateSkinningIssues(
     });
   }
 
-  // Invalid weight sum
   if (stats.invalidWeightSumVertices > 0) {
     const first = stats.invalidWeightLocations?.[0];
     issues.push({
@@ -304,10 +301,17 @@ export function evaluateSkinningIssues(
       category: 'Skinning',
       severity: 'WARNING',
       title: `Unnormalized bone weights: ${stats.invalidWeightSumVertices}`,
-      description: `${stats.invalidWeightSumVertices} vertices have weight sums differing from 1.0 by > 0.05. May cause mesh collapse or volume inflation.`,
+      description: first
+        ? `${stats.invalidWeightSumVertices} vertices have weight sums differing from 1.0 by > 0.05.`
+        : `${stats.invalidWeightSumVertices} source vertex/vertices had weight sums differing from 1.0 before GLTFLoader normalized the display geometry.`,
       count: stats.invalidWeightSumVertices,
-      repairability: 'CONDITIONAL',
-      suggestedAction: 'Preview normalization of non-zero skin weights. Zero-weight vertices are never guessed automatically.',
+      repairability: first ? 'CONDITIONAL' : 'MANUAL',
+      evidence: first
+        ? 'Measured on the currently addressable skinned mesh geometry.'
+        : 'Measured from source WEIGHTS_0 before Three.js runtime normalization; exact display-vertex localization is unavailable.',
+      suggestedAction: first
+        ? 'Preview normalization of non-zero skin weights. Zero-weight vertices are never guessed automatically.'
+        : 'Repair the source weights in a DCC tool or re-export them normalized. Asset Doctor will not blindly modify a source-only finding it cannot localize.',
       ...(first
         ? {
             meshUuid: first.meshUuid,
@@ -321,8 +325,6 @@ export function evaluateSkinningIssues(
     });
   }
 
-  // Duplicate active influences on the same bone can be consolidated without
-  // guessing a new influence. Keep it informational, but offer a guarded repair.
   if (stats.redundantInfluenceVertices > 0) {
     const first = stats.redundantInfluenceLocations?.[0];
     issues.push({
@@ -350,7 +352,6 @@ export function evaluateSkinningIssues(
     });
   }
 
-  // Unused bones
   if (stats.unusedBonesCount > 0) {
     issues.push({
       id: 'skin-unused-bones',
@@ -454,14 +455,15 @@ export function evaluateTextureIssues(textures: TextureInfo[]): HealthIssue[] {
       category: 'Textures',
       severity: 'ERROR',
       layer: 'Integrity',
-      title: `Invalid texture dimensions: ${invalidDimensionCount}`,
-      description: `${invalidDimensionCount} texture(s) have missing, non-finite, or non-positive dimensions.`,
+      title: `Invalid or unresolved textures: ${invalidDimensionCount}`,
+      description: `${invalidDimensionCount} texture resource(s) have missing, unresolved, non-finite, or non-positive dimensions.`,
       count: invalidDimensionCount,
       ratio:
         textures.length > 0
           ? `${((invalidDimensionCount / textures.length) * 100).toFixed(1)}% (${invalidDimensionCount}/${textures.length})`
           : undefined,
       repairability: 'MANUAL',
+      suggestedAction: 'Restore the missing image/resource or repair the source package before trusting material diagnostics.',
     });
   } else if (textures.length > 0) {
     issues.push({
@@ -542,7 +544,6 @@ export interface HealthAggregateParams {
   normalsAndUv?: HealthIssue[];
   topology: TopologyStats[];
 }
-
 
 function evaluateIntegrity(summary: AssetSummary): HealthIssue[] {
   const countValues = [
@@ -732,35 +733,24 @@ export class HealthEngine {
     const profileId = params.profileId ?? 'general';
     getDiagnosticProfile(profileId);
 
-    // Diagnostic Core v1 — Layer 1: Integrity.
     issues.push(...evaluateIntegrity(params.summary));
     if (params.integrity && Array.isArray(params.integrity)) {
       issues.push(...params.integrity);
     }
 
-    // 1. Materials
     issues.push(...evaluateMaterialIssues(params.materials));
-
-    // 2. Textures
     issues.push(...evaluateTextureIssues(params.textures));
-
-    // 3. Skeleton / Skinning
     issues.push(...evaluateSkinningIssues(params.skeleton, profileId));
-
-    // Diagnostic Core v1 — Layer 3: profile-dependent Fitness expectations.
     issues.push(...evaluateProfileExpectations(params.summary, profileId));
 
-    // 4. Animation diagnostics
     if (params.animationDiagnostics && Array.isArray(params.animationDiagnostics)) {
       issues.push(...params.animationDiagnostics);
     }
 
-    // 5. Transforms
     if (params.transforms && Array.isArray(params.transforms)) {
       issues.push(...params.transforms);
     }
 
-    // 6. Performance
     if (params.performance) {
       if (Array.isArray(params.performance)) {
         issues.push(...params.performance);
@@ -769,18 +759,14 @@ export class HealthEngine {
       }
     }
 
-    // 7. Normals and UVs
     if (params.normalsAndUv && Array.isArray(params.normalsAndUv)) {
       issues.push(...params.normalsAndUv);
     }
 
-    // 8. Topology issues
     if (params.topology && params.topology.length > 0) {
       issues.push(...aggregateTopologyIssues(params.topology));
     }
 
-    // Diagnostic Core v1 — normalize every finding into Integrity / Health / Fitness
-    // and attach conservative repair metadata. This does NOT perform any repair.
     return issues.map((issue) => decorateIssue(issue, profileId));
   }
 }
