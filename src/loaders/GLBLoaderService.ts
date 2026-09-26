@@ -32,11 +32,12 @@ export class GLBLoaderService {
     };
     this.gltfLoader = new GLTFLoader(this.loadingManager);
 
-    // Browser build fallback. Tauri packaging replaces this with bundled offline
-    // decoders; until then any decoder fetch failure is surfaced by LoadingManager.
+    // Draco is part of the application now. Vite serves the decoder directly
+    // from Three's pinned package during development and copies the same files
+    // into dist/draco for production/Tauri, so model loading needs no CDN/network.
     try {
       this.dracoLoader = new DRACOLoader(this.loadingManager);
-      this.dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+      this.dracoLoader.setDecoderPath(new URL('draco/', window.location.href).href);
       this.gltfLoader.setDRACOLoader(this.dracoLoader);
     } catch (e) {
       console.warn('DRACOLoader initialization notice:', e);
