@@ -43,6 +43,14 @@ import type {
   TextureInfo,
 } from '../types';
 import { useI18n } from '../i18n';
+import {
+  categoryLabel,
+  diagnosticElementLabel,
+  diagnosticLayerLabel,
+  localizeHealthIssue,
+  repairabilityLabel,
+  severityLabel,
+} from '../health/HealthIssueLocalization';
 import { getRepairOperationForIssue } from '../heal/framework/RepairRegistry';
 import { buildRepairQueueCandidates } from '../heal/RepairQueue';
 import { HealReportPanel } from './HealReportPanel';
@@ -129,7 +137,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onUndoHeal,
   onSelectMeshByUuid,
 }) => {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const localizedIssue = (issue: HealthIssue) => localizeHealthIssue(issue, language);
 
   const [activeTab, setActiveTab] = useState<
     'health' | 'summary' | 'materials' | 'skeleton' | 'performance'
@@ -333,7 +342,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       current.clipName ??
       t('inspector.assetWide');
 
-    const element = current.affectedElement ? ` · ${current.affectedElement}` : '';
+    const element = current.affectedElement ? ` · ${diagnosticElementLabel(current.affectedElement, language)}` : '';
     const indices = current.affectedIndices?.length
       ? ` [${current.affectedIndices.slice(0, 8).join(', ')}${current.affectedIndices.length > 8 ? ', …' : ''}]`
       : '';
@@ -515,7 +524,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <div className="text-[10px] text-gray-400 truncate">
                   {getRepairOperationForIssue(repairQueue[0].issue)
                     ? t(getRepairOperationForIssue(repairQueue[0].issue)!.labelKey)
-                    : repairQueue[0].issue.title}
+                    : localizedIssue(repairQueue[0].issue).title}
                   {repairQueue[0].meshName ? ` · ${repairQueue[0].meshName}` : ''}
                 </div>
               )}
@@ -725,7 +734,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   <ChevronLeft className="h-4 w-4" />
                 </button>
                 <div className="text-center">
-                  <div className="text-[11px] font-semibold text-gray-200">Diagnostic card</div>
+                  <div className="text-[11px] font-semibold text-gray-200">{language === 'ru' ? 'Диагностическая карточка' : 'Diagnostic card'}</div>
                   <div className="font-mono text-[10px] text-gray-500">{currentIssueIndex + 1} / {filteredIssues.length}</div>
                 </div>
                 <button
@@ -753,16 +762,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                             issue.severity
                           )}`}
                         >
-                          {issue.severity}
+                          {severityLabel(issue.severity, language)}
                         </span>
                         <span className="text-[10px] text-gray-400 font-mono">
-                          [{issue.category}]
+                          [{categoryLabel(issue.category, language)}]
                         </span>
                         <span className="text-[9px] text-cyan-300/80 font-mono uppercase">
-                          {issue.layer ?? 'Health'}
+                          {diagnosticLayerLabel(issue.layer, language)}
                         </span>
                       </div>
-                      <h4 className="mt-1 text-sm font-semibold leading-snug text-gray-100">{issue.title}</h4>
+                      <h4 className="mt-1 text-sm font-semibold leading-snug text-gray-100">{localizedIssue(issue).title}</h4>
                     </div>
                   </div>
 
@@ -770,7 +779,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     <button
                       onClick={() => focusIssueLocation(issue)}
                       className="px-2 py-1 rounded bg-[#272b34] hover:bg-[#323642] text-cyan-400 hover:text-cyan-300 font-medium text-[10px] flex items-center space-x-1 cursor-pointer shrink-0"
-                      title="Move viewport camera to affected coordinates"
+                      title={language === 'ru' ? 'Переместить камеру к найденной области' : 'Move viewport camera to affected coordinates'}
                     >
                       <Focus className="w-3 h-3" />
                       <span>{t('inspector.focus')}</span>
@@ -779,12 +788,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
 
                 <p className="pl-7 text-[13px] leading-relaxed text-gray-200">
-                  {issue.description}
+                  {localizedIssue(issue).description}
                 </p>
 
                 {issue.technicalDetails && (
                   <div className="ml-6 p-1.5 rounded bg-[#15171c] border border-[#242730] font-mono text-[10px] text-gray-400">
-                    {issue.technicalDetails}
+                    {localizedIssue(issue).technicalDetails}
                   </div>
                 )}
 
@@ -817,11 +826,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       )}
                       <div className="rounded border border-[#292d35] bg-[#17191e] px-1.5 py-1">
                         <span className="text-gray-500 block">{t('inspector.severity')}</span>
-                        <span className="text-gray-200 font-mono">{issue.severity} · {issue.layer ?? 'Health'}</span>
+                        <span className="text-gray-200 font-mono">{severityLabel(issue.severity, language)} · {diagnosticLayerLabel(issue.layer, language)}</span>
                       </div>
                       <div className={`rounded border px-1.5 py-1 ${repairabilityClass(issue.repairability)}`}>
                         <span className="opacity-70 block">{t('inspector.repairability')}</span>
-                        <span className="font-mono font-semibold">{issue.repairability ?? 'NONE'}</span>
+                        <span className="font-mono font-semibold">{repairabilityLabel(issue.repairability, language)}</span>
                       </div>
                     </div>
                     {(issue.locations?.length ?? 0) > 1 && (
@@ -844,13 +853,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       </div>
                     )}
                     {issue.evidence && (
-                      <div><span className="text-gray-500">{t('inspector.evidence')}:</span> <span className="text-gray-300">{issue.evidence}</span></div>
+                      <div><span className="text-gray-500">{t('inspector.evidence')}:</span> <span className="text-gray-300">{localizedIssue(issue).evidence}</span></div>
                     )}
-                    {issue.whyItMatters && issue.whyItMatters !== issue.description && (
-                      <div><span className="text-gray-500">{t('inspector.why')}:</span> <span className="text-gray-300">{issue.whyItMatters}</span></div>
+                    {issue.whyItMatters && localizedIssue(issue).whyItMatters !== localizedIssue(issue).description && (
+                      <div><span className="text-gray-500">{t('inspector.why')}:</span> <span className="text-gray-300">{localizedIssue(issue).whyItMatters}</span></div>
                     )}
                     {issue.suggestedAction && (
-                      <div><span className="text-gray-500">{t('inspector.next')}:</span> <span className="text-gray-300">{issue.suggestedAction}</span></div>
+                      <div><span className="text-gray-500">{t('inspector.next')}:</span> <span className="text-gray-300">{localizedIssue(issue).suggestedAction}</span></div>
                     )}
                     {issue.repairability === 'MANUAL' && (
                       <div className="mt-1.5 rounded border border-orange-900/70 bg-orange-950/20 p-1.5">
@@ -1432,14 +1441,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                               issue.severity
                             )}`}
                           >
-                            {issue.severity}
+                            {severityLabel(issue.severity, language)}
                           </span>
                           <span className="text-[9px] text-gray-500 font-mono uppercase">FITNESS</span>
                         </div>
-                        <div className="mt-0.5 text-[11px] font-medium text-gray-200">{issue.title}</div>
+                        <div className="mt-0.5 text-[11px] font-medium text-gray-200">{localizedIssue(issue).title}</div>
                       </div>
                     </div>
-                    <p className="pl-6 text-[10px] leading-relaxed text-gray-400">{issue.description}</p>
+                    <p className="pl-6 text-[10px] leading-relaxed text-gray-400">{localizedIssue(issue).description}</p>
                   </div>
                 ))}
               </div>

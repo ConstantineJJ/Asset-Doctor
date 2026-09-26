@@ -38,6 +38,11 @@ interface LineupRootRuntime {
   root: THREE.Group;
   mixer: THREE.AnimationMixer | null;
   action: THREE.AnimationAction | null;
+  /** Bounds captured once from the authored presentation clone before lineup scaling. */
+  sourceBounds: THREE.Box3;
+  sourceSize: THREE.Vector3;
+  basePosition: THREE.Vector3;
+  baseScale: THREE.Vector3;
 }
 
 interface LineupRuntime {
@@ -47,6 +52,8 @@ interface LineupRuntime {
   roots: LineupRootRuntime[];
   lightingManager: LightingManager;
   renderModeManager: RenderModeManager;
+  /** Current analytically maintained lineup bounds; avoids expandByObject on UI input. */
+  bounds: THREE.Box3;
 }
 
 /**
@@ -191,7 +198,7 @@ export class CompareSceneManager {
 
   public setScaleMode(mode: CompareScaleMode) {
     this.scaleMode = mode;
-    if (this.viewMode === 'lineup') this.rebuildLineup(true);
+    if (this.viewMode === 'lineup') this.updateLineupLayout(true, true);
   }
 
   public setRenderMode(mode: RenderMode) {
@@ -237,7 +244,7 @@ export class CompareSceneManager {
     const next = this.clampManualScale(scale);
     this.manualScales.set(assetId, next);
     this.callbacks.onManualScaleChange?.(assetId, next);
-    if (this.viewMode === 'lineup') this.rebuildLineup(reframe);
+    if (this.viewMode === 'lineup') this.updateLineupLayout(reframe, reframe);
   }
 
   public resetManualScales() {
@@ -245,7 +252,7 @@ export class CompareSceneManager {
       this.manualScales.set(asset.id, 1);
       this.callbacks.onManualScaleChange?.(asset.id, 1);
     }
-    if (this.viewMode === 'lineup') this.rebuildLineup(true);
+    if (this.viewMode === 'lineup') this.updateLineupLayout(true, true);
   }
 
   public getManualScale(assetId: string) {
@@ -478,50 +485,36 @@ export class CompareSceneManager {
     if (this.assets.length === 0) return;
 
     const scene = this.createScene();
-    const raw: Array<{ asset: CompareAssetRecord; root: THREE.Group; size: THREE.Vector3 }> = [];
-    let maxHeight = 0;
+    const roots: LineupRootRuntime[] = [];
+
+    // Cloning a production GLB (especially a skinned/textured one) is expensive.
+    // Do it once when Lineup is created, never for interactive scale changes.
     for (const asset of this.assets) {
       const root = this.cloneAuthoredAsset(asset);
       root.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(root);
-      const size = bounds.getSize(new THREE.Vector3());
-      maxHeight = Math.max(maxHeight, size.y);
-      raw.push({ asset, root, size });
-    }
+      const sourceBounds = new THREE.Box3().setFromObject(root);
+      const sourceSize = sourceBounds.getSize(new THREE.Vector3());
+      const basePosition = root.position.clone();
+      const baseScale = root.scale.clone();
+      scene.add(root);
 
-    const targetHeight = Math.max(maxHeight, 1);
-    const gap = Math.max(targetHeight * 0.18, 0.25);
-    let cursorX = 0;
-    const roots: LineupRootRuntime[] = [];
-
-    for (const entry of raw) {
-      const normalizeScale = this.scaleMode === 'normalize-height' && entry.size.y > 1e-6
-        ? targetHeight / entry.size.y
-        : 1;
-      const manualScale = this.manualScales.get(entry.asset.id) ?? 1;
-      entry.root.scale.multiplyScalar(normalizeScale * manualScale);
-      entry.root.updateMatrixWorld(true);
-
-      const scaledBounds = new THREE.Box3().setFromObject(entry.root);
-      const scaledSize = scaledBounds.getSize(new THREE.Vector3());
-      entry.root.position.x += cursorX - scaledBounds.min.x;
-      entry.root.position.y -= scaledBounds.min.y;
-      entry.root.updateMatrixWorld(true);
-      cursorX += scaledSize.x + gap;
-      scene.add(entry.root);
-
-      const mixer = entry.asset.animations.length > 0 ? new THREE.AnimationMixer(entry.root) : null;
+      const mixer = asset.animations.length > 0 ? new THREE.AnimationMixer(root) : null;
       let action: THREE.AnimationAction | null = null;
       if (mixer) {
-        const clipIndex = THREE.MathUtils.clamp(entry.asset.selectedClipIndex, 0, entry.asset.animations.length - 1);
-        action = this.createAction(mixer, entry.asset.animations[clipIndex]);
+        const clipIndex = THREE.MathUtils.clamp(asset.selectedClipIndex, 0, asset.animations.length - 1);
+        action = this.createAction(mixer, asset.animations[clipIndex]);
       }
-      roots.push({ asset: entry.asset, root: entry.root, mixer, action });
+      roots.push({
+        asset,
+        root,
+        mixer,
+        action,
+        sourceBounds,
+        sourceSize,
+        basePosition,
+        baseScale,
+      });
     }
-
-    const combined = new THREE.Box3();
-    roots.forEach((entry) => combined.expandByObject(entry.root));
-    this.addGrid(scene, combined);
 
     const lightingManager = new LightingManager(scene);
     lightingManager.applyPreset(this.lightingPreset);
@@ -539,18 +532,89 @@ export class CompareSceneManager {
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
 
-    this.lineup = { scene, camera, controls, roots, lightingManager, renderModeManager };
+    this.lineup = {
+      scene,
+      camera,
+      controls,
+      roots,
+      lightingManager,
+      renderModeManager,
+      bounds: new THREE.Box3(),
+    };
+    this.updateLineupLayout(reframe, true);
     scene.updateMatrixWorld(true);
     this.seekNormalized(progress);
-    // Every newly rebuilt Lineup needs a deterministic frame.
-    this.frameLineup();
     this.updateControlEnablement();
   }
 
+  private updateLineupLayout(reframe: boolean, refreshGrid: boolean) {
+    if (!this.lineup || this.lineup.roots.length === 0) return;
+
+    const maxHeight = Math.max(
+      0,
+      ...this.lineup.roots.map((entry) => entry.sourceSize.y)
+    );
+    const targetHeight = Math.max(maxHeight, 1);
+    const gap = Math.max(targetHeight * 0.18, 0.25);
+    const combined = new THREE.Box3();
+    let cursorX = 0;
+
+    for (const entry of this.lineup.roots) {
+      const normalizeScale =
+        this.scaleMode === 'normalize-height' && entry.sourceSize.y > 1e-6
+          ? targetHeight / entry.sourceSize.y
+          : 1;
+      const manualScale = this.manualScales.get(entry.asset.id) ?? 1;
+      const factor = normalizeScale * manualScale;
+
+      // sourceBounds were measured with baseScale already applied. Uniformly
+      // scaling their offsets around the root origin lets us update bounds and
+      // placement without traversing thousands of meshes/vertices again.
+      const minOffset = entry.sourceBounds.min.clone().sub(entry.basePosition).multiplyScalar(factor);
+      const maxOffset = entry.sourceBounds.max.clone().sub(entry.basePosition).multiplyScalar(factor);
+
+      entry.root.scale.copy(entry.baseScale).multiplyScalar(factor);
+      entry.root.position.copy(entry.basePosition);
+
+      const currentMinX = entry.root.position.x + minOffset.x;
+      entry.root.position.x += cursorX - currentMinX;
+      const currentMinY = entry.root.position.y + minOffset.y;
+      entry.root.position.y -= currentMinY;
+      entry.root.updateMatrixWorld(true);
+
+      const min = entry.root.position.clone().add(minOffset);
+      const max = entry.root.position.clone().add(maxOffset);
+      combined.expandByPoint(min);
+      combined.expandByPoint(max);
+
+      cursorX += entry.sourceSize.x * factor + gap;
+    }
+
+    this.lineup.bounds.copy(combined);
+    if (refreshGrid) this.refreshLineupGrid();
+    if (reframe) this.frameLineup();
+  }
+
+  private refreshLineupGrid() {
+    if (!this.lineup || this.lineup.bounds.isEmpty()) return;
+    const stale = this.lineup.scene.children.filter(
+      (child) => child.name === '__asset_doctor_compare_grid'
+    );
+    for (const child of stale) {
+      this.lineup.scene.remove(child);
+      if ((child as THREE.GridHelper).isGridHelper) {
+        (child as THREE.GridHelper).geometry.dispose();
+        const material = (child as THREE.GridHelper).material;
+        if (Array.isArray(material)) material.forEach((value) => value.dispose());
+        else material.dispose();
+      }
+    }
+    this.addGrid(this.lineup.scene, this.lineup.bounds);
+  }
+
   private frameLineup() {
-    if (!this.lineup) return;
-    const bounds = new THREE.Box3();
-    this.lineup.roots.forEach((entry) => bounds.expandByObject(entry.root));
+    if (!this.lineup || this.lineup.bounds.isEmpty()) return;
+    const bounds = this.lineup.bounds;
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
     const radius = Math.max(size.length() * 0.5, 0.1);
