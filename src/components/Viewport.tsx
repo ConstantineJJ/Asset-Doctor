@@ -29,7 +29,21 @@ export const Viewport: React.FC<ViewportProps> = ({
 
   useEffect(() => {
     if (!containerRef.current) return;
-    return onCanvasMount(containerRef.current);
+    const container = containerRef.current;
+    let cleanup: void | (() => void);
+
+    // React runs child effects before the parent's passive effects. Asset Doctor's
+    // initial sample used to start analysis before WorkerManager existed, leaving
+    // Topology forever in "running". One macrotask lets App finish service setup
+    // before the viewport asks it to create SceneManager/load the sample.
+    const timer = window.setTimeout(() => {
+      cleanup = onCanvasMount(container);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      cleanup?.();
+    };
   }, [onCanvasMount]);
 
   const handleDragOver = (e: React.DragEvent) => {
