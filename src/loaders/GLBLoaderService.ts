@@ -6,6 +6,7 @@ import {
   nowMs,
   performanceCore,
 } from '../performance/PerformanceProfiler';
+import { auditGltfSource, type GltfSourceAudit } from './GltfSourceAudit';
 
 export interface LoadedModelResult {
   fileName: string;
@@ -13,18 +14,26 @@ export interface LoadedModelResult {
   root: THREE.Group;
   animations: THREE.AnimationClip[];
   sourceBuffer?: ArrayBuffer;
+  sourceAudit?: GltfSourceAudit;
 }
 
 export class GLBLoaderService {
   private gltfLoader: GLTFLoader;
   private dracoLoader: DRACOLoader | null = null;
+  private readonly loadingManager: THREE.LoadingManager;
+  private activeResourceErrors: string[] = [];
 
   constructor() {
-    this.gltfLoader = new GLTFLoader();
+    this.loadingManager = new THREE.LoadingManager();
+    this.loadingManager.onError = (url) => {
+      if (!this.activeResourceErrors.includes(url)) this.activeResourceErrors.push(url);
+    };
+    this.gltfLoader = new GLTFLoader(this.loadingManager);
 
-    // Configure DRACO loader with standard Google/Three.js CDN decoder path as fallback
+    // Browser build fallback. Tauri packaging replaces this with bundled offline
+    // decoders; until then any decoder fetch failure is surfaced by LoadingManager.
     try {
-      this.dracoLoader = new DRACOLoader();
+      this.dracoLoader = new DRACOLoader(this.loadingManager);
       this.dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
       this.gltfLoader.setDRACOLoader(this.dracoLoader);
     } catch (e) {
@@ -35,7 +44,18 @@ export class GLBLoaderService {
   public async loadFromFile(file: File): Promise<LoadedModelResult> {
     const startedAt = nowMs();
     const arrayBuffer = await file.arrayBuffer();
-    const result = await this.loadFromArrayBuffer(arrayBuffer, file.name, file.size);
+    const sourceAudit = auditGltfSource(arrayBuffer);
+
+    // A single browser File cannot resolve a normal .gltf package containing
+    // sibling .bin/images. Failing loudly is safer than loading a partial model
+    // and reporting "No textures" as if that were authored intent.
+    if (/\.gltf$/i.test(file.name) && sourceAudit.externalUris.length > 0) {
+      throw new Error(
+        `External .gltf resources are not supported by single-file import yet: ${sourceAudit.externalUris.slice(0, 5).join(', ')}. Use a self-contained GLB.`
+      );
+    }
+
+    const result = await this.loadFromArrayBuffer(arrayBuffer, file.name, file.size, sourceAudit);
 
     performanceCore.resetForAsset(
       arrayBuffer.byteLength,
@@ -46,14 +66,16 @@ export class GLBLoaderService {
     // GLTFLoader.parse does not mutate the source ArrayBuffer. Keep the original
     // buffer as the pristine export source instead of retaining an unnecessary
     // full-size copy beside it (important for multi-hundred-MB assets).
-    return { ...result, sourceBuffer: arrayBuffer };
+    return { ...result, sourceBuffer: arrayBuffer, sourceAudit };
   }
 
   public async loadFromArrayBuffer(
     buffer: ArrayBuffer,
     fileName: string = 'model.glb',
-    fileSizeBytes?: number
+    fileSizeBytes?: number,
+    sourceAudit: GltfSourceAudit = auditGltfSource(buffer)
   ): Promise<LoadedModelResult> {
+    this.activeResourceErrors = [];
     return new Promise((resolve, reject) => {
       this.gltfLoader.parse(
         buffer,
@@ -63,21 +85,25 @@ export class GLBLoaderService {
           if (!root.name) {
             root.name = fileName.replace(/\.[^/.]+$/, '');
           }
+          sourceAudit.resourceErrors = [...this.activeResourceErrors];
           resolve({
             fileName,
             fileSizeBytes: fileSizeBytes ?? buffer.byteLength,
             root,
             animations: gltf.animations || [],
+            sourceAudit,
           });
         },
         (error) => {
-          reject(new Error(`Failed to parse GLB model: ${error}`));
+          sourceAudit.resourceErrors = [...this.activeResourceErrors];
+          reject(new Error(`Failed to parse GLB/glTF model: ${error}`));
         }
       );
     });
   }
 
   public async loadFromUrl(url: string, fileName?: string): Promise<LoadedModelResult> {
+    this.activeResourceErrors = [];
     return new Promise((resolve, reject) => {
       this.gltfLoader.load(
         url,
