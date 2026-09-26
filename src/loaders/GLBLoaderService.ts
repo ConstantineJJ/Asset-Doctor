@@ -7,6 +7,7 @@ import {
   performanceCore,
 } from '../performance/PerformanceProfiler';
 import { auditGltfSource, type GltfSourceAudit } from './GltfSourceAudit';
+import { captureAuthoredMaterials } from '../viewer/AuthoredMaterialState';
 
 export interface LoadedModelResult {
   fileName: string;
@@ -82,10 +83,13 @@ export class GLBLoaderService {
         '',
         (gltf) => {
           const root = gltf.scene || new THREE.Group();
-          if (!root.name) {
-            root.name = fileName.replace(/\.[^/.]+$/, '');
-          }
+          if (!root.name) root.name = fileName.replace(/\.[^/.]+$/, '');
+
+          // Snapshot authored material state before SceneManager applies any
+          // viewport-only visibility/culling/presentation adjustments.
+          captureAuthoredMaterials(root);
           sourceAudit.resourceErrors = [...this.activeResourceErrors];
+
           resolve({
             fileName,
             fileSizeBytes: fileSizeBytes ?? buffer.byteLength,
@@ -110,6 +114,7 @@ export class GLBLoaderService {
         (gltf) => {
           const name = fileName || url.split('/').pop() || 'model.glb';
           const root = gltf.scene || new THREE.Group();
+          captureAuthoredMaterials(root);
           resolve({
             fileName: name,
             root,
