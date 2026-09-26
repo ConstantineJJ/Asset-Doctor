@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { TextureInfo } from '../types';
 import { getAuthoredMaterials } from '../viewer/AuthoredMaterialState';
+import type { GltfSourceAudit } from '../loaders/GltfSourceAudit';
 
 export function analyzeTextures(root: THREE.Object3D): TextureInfo[] {
   const texturesMap = new Map<string, { texture: THREE.Texture; materials: Set<string> }>();
@@ -48,8 +49,6 @@ export function analyzeTextures(root: THREE.Object3D): TextureInfo[] {
       height = img.height || img.naturalHeight || 0;
     }
 
-    // Conservative RGBA8 estimate. Compressed GPU formats are reported elsewhere
-    // when explicit metadata is available; do not pretend this is file size.
     const bytesEstimate = width > 0 && height > 0 ? width * height * 4 : 0;
 
     let formatStr = 'RGBA';
@@ -57,8 +56,6 @@ export function analyzeTextures(root: THREE.Object3D): TextureInfo[] {
     else if (texture.format === THREE.RedFormat) formatStr = 'R';
     else if (texture.format === THREE.RGFormat) formatStr = 'RG';
 
-    // Three.js uses an empty colorSpace for data textures such as normal,
-    // roughness and metalness. Empty must not be silently relabelled as sRGB.
     const colorSpace = texture.colorSpace || 'none/data';
 
     result.push({
@@ -70,6 +67,22 @@ export function analyzeTextures(root: THREE.Object3D): TextureInfo[] {
       colorSpace,
       uncompressedBytesEstimate: bytesEstimate,
       materialsUsed: Array.from(materials),
+    });
+  }
+
+  // LoadingManager records failed dependent resources. Represent them explicitly
+  // as invalid texture entries so Health cannot collapse "missing" into N/A.
+  const sourceAudit = root.userData.__assetDoctorSourceAudit as GltfSourceAudit | undefined;
+  for (const [index, url] of (sourceAudit?.resourceErrors ?? []).entries()) {
+    result.push({
+      uuid: `missing-resource-${index}-${url}`,
+      name: `Missing resource: ${url}`,
+      width: 0,
+      height: 0,
+      format: 'UNRESOLVED',
+      colorSpace: 'unknown',
+      uncompressedBytesEstimate: 0,
+      materialsUsed: [],
     });
   }
 
