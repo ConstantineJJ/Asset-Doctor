@@ -76,7 +76,7 @@ export function App() {
 
   // App States
   const [isLoading, setIsLoading] = useState(false);
-  const [fileName, setFileName] = useState<string>('Explorer_Drone_MK4.glb');
+  const [fileName, setFileName] = useState<string>('');
   const [fileSizeBytes, setFileSizeBytes] = useState<number | undefined>(undefined);
 
   // Analysis & Diagnostic States
@@ -469,7 +469,7 @@ export function App() {
     [runAnalysisPipeline]
   );
 
-  // Mount Viewport & Load Default Model
+  // Mount an empty viewport. Built-in specimens remain available from Examples.
   const handleCanvasMount = useCallback(
     (container: HTMLElement) => {
       if (!sceneManagerRef.current) {
@@ -494,16 +494,6 @@ export function App() {
           }
         }, 500);
 
-        // Load the single deterministic Asset Doctor test patient.
-        const defaultSample = createAssetDoctorTestPatient();
-        loadAsset(
-          defaultSample.root,
-          defaultSample.animations,
-          'Asset_Doctor_Test_Patient.glb',
-          1024 * 180,
-          { kind: 'sample', sampleId: 'test-patient' }
-        );
-
         return () => {
           clearInterval(fpsInterval);
           if (sceneManagerRef.current === mgr) {
@@ -513,7 +503,7 @@ export function App() {
         };
       }
     },
-    [loadAsset]
+    []
   );
 
   // Update selectedNode state when selectedUuid changes

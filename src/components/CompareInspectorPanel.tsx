@@ -14,17 +14,17 @@ function formatBytes(bytes: number) {
 }
 
 const METRICS: Array<[string, (asset: CompareMetricAsset) => string]> = [
-  ['Triangles', (asset) => asset.triangleCount.toLocaleString()],
-  ['Vertices', (asset) => asset.vertexCount.toLocaleString()],
+  ['Tris', (asset) => asset.triangleCount.toLocaleString()],
+  ['Verts', (asset) => asset.vertexCount.toLocaleString()],
   ['Meshes', (asset) => asset.meshCount.toLocaleString()],
-  ['Materials', (asset) => asset.materialCount.toLocaleString()],
-  ['Textures', (asset) => asset.textureCount.toLocaleString()],
+  ['Mats', (asset) => asset.materialCount.toLocaleString()],
+  ['Tex', (asset) => asset.textureCount.toLocaleString()],
   ['Bones', (asset) => asset.boneCount.toLocaleString()],
   ['Clips', (asset) => asset.animationCount.toLocaleString()],
-  ['Draw calls', (asset) => asset.drawCalls.toLocaleString()],
-  ['Texture VRAM', (asset) => formatBytes(asset.textureVramBytes)],
+  ['Draw', (asset) => asset.drawCalls.toLocaleString()],
+  ['VRAM', (asset) => formatBytes(asset.textureVramBytes)],
   ['Height', (asset) => `${asset.height.toFixed(3)} m`],
-  ['Lineup scale', (asset) => `${asset.manualScale.toFixed(2)}×`],
+  ['Scale', (asset) => `${asset.manualScale.toFixed(2)}×`],
 ];
 
 export const CompareInspectorPanel: React.FC<CompareInspectorPanelProps> = ({ snapshot }) => {
@@ -111,13 +111,13 @@ export const CompareInspectorPanel: React.FC<CompareInspectorPanelProps> = ({ sn
           <div className="flex items-center gap-1.5 border-b border-[#2d313a] px-2.5 py-2 text-[10px] uppercase tracking-wider text-gray-400">
             <BarChart3 className="w-3.5 h-3.5 text-cyan-400" /> Metric Matrix
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-[620px] w-full text-[9px] text-gray-300">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed text-[8px] text-gray-300">
               <thead className="bg-[#1d2027] text-gray-500">
                 <tr>
-                  <th className="px-2 py-1.5 text-left font-medium">Metric</th>
+                  <th className="w-[30%] px-1.5 py-1.5 text-left font-medium">Metric</th>
                   {snapshot.assets.map((asset) => (
-                    <th key={asset.id} className={`max-w-32 px-2 py-1.5 text-right font-medium ${asset.id === active?.id ? 'text-cyan-300' : ''}`}>
+                    <th key={asset.id} className={`px-1 py-1.5 text-right font-medium ${asset.id === active?.id ? 'text-cyan-300' : ''}`}>
                       {asset.slot}
                     </th>
                   ))}
@@ -126,9 +126,9 @@ export const CompareInspectorPanel: React.FC<CompareInspectorPanelProps> = ({ sn
               <tbody className="font-mono tabular-nums">
                 {METRICS.map(([label, formatter]) => (
                   <tr key={label} className="border-t border-[#2a2e37]">
-                    <th className="px-2 py-1.5 text-left font-normal text-gray-500">{label}</th>
+                    <th className="truncate px-1.5 py-1.5 text-left font-normal text-gray-500" title={label}>{label}</th>
                     {snapshot.assets.map((asset) => (
-                      <td key={asset.id} className={`px-2 py-1.5 text-right ${asset.id === active?.id ? 'text-cyan-200' : 'text-gray-200'}`}>
+                      <td key={asset.id} className={`px-1 py-1.5 text-right tabular-nums ${asset.id === active?.id ? 'text-cyan-200' : 'text-gray-200'}`}>
                         {formatter(asset)}
                       </td>
                     ))}

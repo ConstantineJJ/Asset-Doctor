@@ -166,21 +166,32 @@ export class CompareSceneManager {
       this.callbacks.onSoloRequest?.(null);
     }
 
-    this.rebuildLineup(false);
-    this.seekNormalized(progress);
+    if (this.viewMode === 'lineup') {
+      this.rebuildLineup(true);
+    } else {
+      this.seekNormalized(progress);
+    }
     this.updateControlEnablement();
     removedRoots.forEach((root) => this.disposeAssetRoot(root));
   }
 
   public setViewMode(mode: CompareViewMode) {
     this.viewMode = mode;
-    if (mode === 'lineup' && !this.lineup) this.rebuildLineup(true);
+    if (mode === 'lineup') {
+      // Lineup is presentation-only. Rebuild from authored source each time we
+      // enter it instead of reusing stale clones created while Grid was active.
+      this.rebuildLineup(true);
+    } else {
+      // Release presentation clones/mixers while Grid is active. Session state
+      // such as manual scales and selected assets is stored outside the clones.
+      this.clearLineup();
+    }
     this.updateControlEnablement();
   }
 
   public setScaleMode(mode: CompareScaleMode) {
     this.scaleMode = mode;
-    this.rebuildLineup(true);
+    if (this.viewMode === 'lineup') this.rebuildLineup(true);
   }
 
   public setRenderMode(mode: RenderMode) {
@@ -529,9 +540,10 @@ export class CompareSceneManager {
     controls.screenSpacePanning = true;
 
     this.lineup = { scene, camera, controls, roots, lightingManager, renderModeManager };
+    scene.updateMatrixWorld(true);
     this.seekNormalized(progress);
-    if (reframe) this.frameLineup();
-    else this.frameLineup();
+    // Every newly rebuilt Lineup needs a deterministic frame.
+    this.frameLineup();
     this.updateControlEnablement();
   }
 

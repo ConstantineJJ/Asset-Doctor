@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Box,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   History,
   RefreshCw,
@@ -136,6 +137,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
   const [severityFilter, setSeverityFilter] = useState<HealthSeverity | 'ALL'>('ALL');
   const [locationIndexByIssue, setLocationIndexByIssue] = useState<Record<string, number>>({});
+  const [issuePageIndex, setIssuePageIndex] = useState(0);
 
   // Technical Health deliberately excludes target/profile Fitness judgments.
   // A heavy but structurally valid model must not look "sick" merely because it is expensive.
@@ -146,6 +148,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     if (severityFilter !== 'ALL' && issue.severity !== severityFilter) return false;
     return true;
   });
+  const currentIssueIndex = filteredIssues.length > 0
+    ? Math.min(issuePageIndex, filteredIssues.length - 1)
+    : 0;
+  const currentIssue = filteredIssues[currentIssueIndex] ?? null;
+  const changeSeverityFilter = (next: HealthSeverity | 'ALL') => {
+    setSeverityFilter(next);
+    setIssuePageIndex(0);
+  };
 
   const severityCounts = {
     ERROR: technicalHealthIssues.filter((i) => i.severity === 'ERROR').length,
@@ -633,7 +643,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           {/* Severity Counters Bar */}
           <div className="grid grid-cols-4 gap-1.5">
             <button
-              onClick={() => setSeverityFilter(severityFilter === 'ERROR' ? 'ALL' : 'ERROR')}
+              onClick={() => changeSeverityFilter(severityFilter === 'ERROR' ? 'ALL' : 'ERROR')}
               className={`p-2 rounded border flex flex-col items-center transition cursor-pointer ${
                 severityFilter === 'ERROR'
                   ? 'bg-rose-950/70 border-rose-600 text-rose-200'
@@ -645,7 +655,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </button>
 
             <button
-              onClick={() => setSeverityFilter(severityFilter === 'WARNING' ? 'ALL' : 'WARNING')}
+              onClick={() => changeSeverityFilter(severityFilter === 'WARNING' ? 'ALL' : 'WARNING')}
               className={`p-2 rounded border flex flex-col items-center transition cursor-pointer ${
                 severityFilter === 'WARNING'
                   ? 'bg-amber-950/70 border-amber-600 text-amber-200'
@@ -657,7 +667,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </button>
 
             <button
-              onClick={() => setSeverityFilter(severityFilter === 'INFO' ? 'ALL' : 'INFO')}
+              onClick={() => changeSeverityFilter(severityFilter === 'INFO' ? 'ALL' : 'INFO')}
               className={`p-2 rounded border flex flex-col items-center transition cursor-pointer ${
                 severityFilter === 'INFO'
                   ? 'bg-sky-950/70 border-sky-600 text-sky-200'
@@ -669,7 +679,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </button>
 
             <button
-              onClick={() => setSeverityFilter(severityFilter === 'OK' ? 'ALL' : 'OK')}
+              onClick={() => changeSeverityFilter(severityFilter === 'OK' ? 'ALL' : 'OK')}
               className={`p-2 rounded border flex flex-col items-center transition cursor-pointer ${
                 severityFilter === 'OK'
                   ? 'bg-emerald-950/70 border-emerald-600 text-emerald-200'
@@ -697,7 +707,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               </div>
               {severityFilter !== 'ALL' && (
                 <button
-                  onClick={() => setSeverityFilter('ALL')}
+                  onClick={() => changeSeverityFilter('ALL')}
                   className="text-cyan-400 hover:underline cursor-pointer text-[10px]"
                 >
                   {t('inspector.clearFilters')}
@@ -705,10 +715,33 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               )}
             </div>
 
-            {filteredIssues.map((issue) => (
+            {filteredIssues.length > 0 && (
+              <div className="flex items-center justify-between rounded border border-[#303541] bg-[#191c22] px-2.5 py-2">
+                <button
+                  onClick={() => setIssuePageIndex((currentIssueIndex - 1 + filteredIssues.length) % filteredIssues.length)}
+                  className="rounded border border-[#39404c] bg-[#22262e] p-1.5 text-gray-300 hover:border-cyan-800 hover:text-cyan-200"
+                  title={t('inspector.previous')}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <div className="text-center">
+                  <div className="text-[11px] font-semibold text-gray-200">Diagnostic card</div>
+                  <div className="font-mono text-[10px] text-gray-500">{currentIssueIndex + 1} / {filteredIssues.length}</div>
+                </div>
+                <button
+                  onClick={() => setIssuePageIndex((currentIssueIndex + 1) % filteredIssues.length)}
+                  className="rounded border border-[#39404c] bg-[#22262e] p-1.5 text-gray-300 hover:border-cyan-800 hover:text-cyan-200"
+                  title={t('inspector.nextIssue')}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            {currentIssue && [currentIssue].map((issue) => (
               <div
                 key={issue.id}
-                className="bg-[#1c1e24] border border-[#2c3039] rounded p-2.5 flex flex-col space-y-1.5 hover:border-[#3d4250] transition"
+                className="bg-[#1c1e24] border border-[#2c3039] rounded p-4 flex flex-col space-y-3 text-sm hover:border-[#3d4250] transition"
               >
                 <div className="flex items-start justify-between space-x-2">
                   <div className="flex items-start space-x-2">
@@ -729,7 +762,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                           {issue.layer ?? 'Health'}
                         </span>
                       </div>
-                      <h4 className="font-semibold text-gray-100 mt-0.5">{issue.title}</h4>
+                      <h4 className="mt-1 text-sm font-semibold leading-snug text-gray-100">{issue.title}</h4>
                     </div>
                   </div>
 
@@ -745,7 +778,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   )}
                 </div>
 
-                <p className="text-gray-300 text-[11px] leading-relaxed pl-6">
+                <p className="pl-7 text-[13px] leading-relaxed text-gray-200">
                   {issue.description}
                 </p>
 
@@ -764,7 +797,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   issue.nodeName ||
                   issue.boneName ||
                   issue.clipName) && (
-                  <div className="ml-6 pt-1.5 border-t border-[#262932] space-y-1.5 text-[10px]">
+                  <div className="ml-7 space-y-2 border-t border-[#262932] pt-2 text-[11px]">
                     <div className="grid grid-cols-2 gap-1">
                       <div className="col-span-2 rounded border border-[#292d35] bg-[#17191e] px-1.5 py-1">
                         <span className="text-gray-500">{t('inspector.location')}:</span>{' '}
