@@ -1,6 +1,7 @@
 import { runSyntheticTopologyTests } from '../src/analysis/SyntheticTopologyTests';
 import { runDiagnosticCoreTests } from '../src/analysis/DiagnosticCoreTests';
 import { runDiagnosticCoverageTests } from '../src/analysis/DiagnosticCoverageTests';
+import { runSourceFidelityTests } from '../src/analysis/SourceFidelityTests';
 import { runCompareLayoutTests } from '../src/compare/CompareLayoutTests';
 import { runGltfSourceAuditTests } from '../src/loaders/GltfSourceAuditTests';
 import {
@@ -13,6 +14,7 @@ async function main() {
     ...runSyntheticTopologyTests(),
     ...runDiagnosticCoreTests(),
     ...runDiagnosticCoverageTests(),
+    ...runSourceFidelityTests(),
     ...runCompareLayoutTests(),
     ...runGltfSourceAuditTests(),
     ...runSurgicalHealTests(),
