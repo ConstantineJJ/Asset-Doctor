@@ -4,6 +4,7 @@ import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
 import { GLBLoaderService } from '../loaders/GLBLoaderService';
+import { auditGltfSource } from '../loaders/GltfSourceAudit';
 import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 import type {
   ExportVerificationReport,
@@ -48,10 +49,48 @@ interface FreshAsset {
   animations: THREE.AnimationClip[];
 }
 
+function attributeVersion(attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute) {
+  return (attribute as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute
+    ? (attribute as THREE.InterleavedBufferAttribute).data.version
+    : (attribute as THREE.BufferAttribute).version;
+}
+
+function repairedMeshFingerprint(root: THREE.Object3D, reports: HealOperationReport[]) {
+  const ids = new Set(reports.map((report) => report.meshUuid));
+  const parts: string[] = [];
+  root.traverse((object) => {
+    if (!(object as THREE.Mesh).isMesh || !ids.has(object.uuid)) return;
+    const mesh = object as THREE.Mesh;
+    const geometry = mesh.geometry;
+    const attrs = Object.entries(geometry.attributes)
+      .map(([name, attr]) => `${name}:${attr.count}:${attr.itemSize}:${attributeVersion(attr)}`)
+      .sort()
+      .join(',');
+    const morphs = Object.entries(geometry.morphAttributes)
+      .map(([name, values]) => `${name}:${values.map((value) => `${value.count}:${value.itemSize}:${attributeVersion(value)}`).join('/')}`)
+      .sort()
+      .join(',');
+    parts.push([
+      mesh.uuid,
+      geometry.uuid,
+      geometry.index?.count ?? -1,
+      geometry.index ? attributeVersion(geometry.index) : -1,
+      attrs,
+      morphs,
+    ].join('|'));
+  });
+  return parts.sort().join('||');
+}
+
 export class RepairedExportService {
   public async exportAndVerify(request: RepairedExportRequest): Promise<RepairedExportResult> {
     const totalStart = nowMs();
     const { currentRoot, healReports, assetName } = request;
+    const sessionBefore = repairedMeshFingerprint(currentRoot, healReports);
+    const sourceAudit = request.source.kind === 'buffer'
+      ? auditGltfSource(request.source.buffer)
+      : undefined;
+
     if (healReports.length === 0) {
       throw new Error('export.errors.healNotVerified');
     }
@@ -120,8 +159,6 @@ export class RepairedExportService {
         throw new Error('export.errors.structureMismatch');
       }
 
-      // Match repaired meshes to the pristine source by stable traversal ordinal
-      // and identity fields. UUIDs are regenerated when the GLB is reopened.
       for (let i = 0; i < currentMeshes.length; i++) {
         if (
           currentMeshes[i].name !== freshMeshes[i].name ||
@@ -132,9 +169,6 @@ export class RepairedExportService {
         }
       }
 
-      // A repair session may contain multiple operations and multiple meshes.
-      // Copy only geometry data into a clean source asset. Materials, transforms,
-      // current animation pose and viewport state remain pristine.
       for (const ordinal of repairedOrdinals) {
         this.applyRepairPatch(currentMeshes[ordinal], freshMeshes[ordinal], 'geometry');
       }
@@ -155,13 +189,9 @@ export class RepairedExportService {
         throw new Error('export.errors.binaryExportFailed');
       }
 
-      // Re-open with a separate loader. The source used to create the GLB is not
-      // trusted as proof that the serialized file can be loaded again.
       const reopenStart = nowMs();
       const verificationLoader = new GLBLoaderService();
       try {
-        // GLTFLoader does not mutate the GLB bytes. Avoid a second full-size copy
-        // of the freshly exported buffer during verification.
         const loaded = await verificationLoader.loadFromArrayBuffer(
           output,
           exportedName,
@@ -187,9 +217,7 @@ export class RepairedExportService {
       const expectedAnimationSignature = this.animationSignature(fresh.animations);
       const actualAnimationSignature = this.animationSignature(reopened.animations);
 
-      if (reopenedMeshes.length !== freshMeshes.length || !targetMesh) {
-        reasons.push('meshComposition');
-      }
+      if (reopenedMeshes.length !== freshMeshes.length || !targetMesh) reasons.push('meshComposition');
       if (expectedMeshSignature !== actualMeshSignature) reasons.push('meshStructure');
       if (expectedMaterialSignature !== actualMaterialSignature) reasons.push('materialStructure');
       if (expectedRigSignature !== actualRigSignature) reasons.push('rigStructure');
@@ -258,6 +286,7 @@ export class RepairedExportService {
       ) {
         reasons.push('targetRedundantSkinInfluences');
       }
+
       if (actualSummary.meshCount !== pristineSummary.meshCount) reasons.push('meshCount');
       const pristineMaterialCount = this.materialSemanticCount(fresh.root);
       const actualMaterialCount = this.materialSemanticCount(reopened.root);
@@ -267,6 +296,27 @@ export class RepairedExportService {
       if (actualSummary.boneCount !== pristineSummary.boneCount) reasons.push('boneCount');
       if (reopened.animations.length !== fresh.animations.length) reasons.push('clipCount');
 
+      // Scene-vs-scene checks cannot detect semantics that GLTFLoader discarded
+      // before Three.js ever created the scene. Compare the raw source glTF JSON
+      // with the serialized output as an additional release-safety gate.
+      if (sourceAudit) {
+        const outputAudit = auditGltfSource(output);
+        if (sourceAudit.semanticExtensions.length > 0) {
+          reasons.push(`sourceExtensions:${sourceAudit.semanticExtensions.join(',')}`);
+        }
+        if (sourceAudit.materialCount !== outputAudit.materialCount) reasons.push('sourceMaterialDefinitions');
+        if (sourceAudit.textureCount !== outputAudit.textureCount) reasons.push('sourceTextureDefinitions');
+        if (sourceAudit.imageCount !== outputAudit.imageCount) reasons.push('sourceImageDefinitions');
+        if (sourceAudit.animationCount !== outputAudit.animationCount) reasons.push('sourceAnimationDefinitions');
+      }
+
+      // Export is asynchronous. Undo/Heal may have happened while GLTFExporter or
+      // reopen verification was awaiting. Never publish a result built from an
+      // obsolete repair-session geometry state.
+      if (sessionBefore !== repairedMeshFingerprint(currentRoot, healReports)) {
+        throw new Error('export.errors.staleSession');
+      }
+
       const report: ExportVerificationReport = {
         version: 1,
         createdAt: new Date().toISOString(),
@@ -274,7 +324,7 @@ export class RepairedExportService {
         exportedName,
         healOperationId: latestReport.operationId,
         status: reasons.length === 0 ? 'VERIFIED' : 'REGRESSION',
-        reasons,
+        reasons: Array.from(new Set(reasons)),
         byteLength: output.byteLength,
         repairCount: healReports.length,
         repairedMeshCount: repairedOrdinals.size,
@@ -327,7 +377,6 @@ export class RepairedExportService {
         },
       };
     } finally {
-      // Verification graphs are temporary. Dispose them even when a check throws.
       this.disposeObject(fresh.root);
       if (reopened) this.disposeObject(reopened.root);
     }
@@ -354,8 +403,6 @@ export class RepairedExportService {
 
     const loader = new GLBLoaderService();
     try {
-      // GLTFLoader.parse is read-only with respect to the source bytes. Reusing
-      // the pristine source avoids another full-size ArrayBuffer allocation.
       const loaded = await loader.loadFromArrayBuffer(
         source.buffer,
         source.fileName,
@@ -408,9 +455,6 @@ export class RepairedExportService {
       throw new Error('export.errors.structureMismatch');
     }
 
-    // Geometry repairs are copied into the pristine source at the geometry-data
-    // level only. Materials, transforms, visibility, rig pose and viewport state
-    // remain sourced from the clean asset.
     copyGeometryData(fresh.geometry, current.geometry);
   }
 
@@ -464,9 +508,6 @@ export class RepairedExportService {
   }
 
   private materialSignature(root: THREE.Object3D) {
-    // Sharing/deduplication of equivalent Three.js Material objects is not a
-    // serialized glTF invariant. Verify the semantic material assignment per
-    // mesh instead of comparing runtime object identity/count.
     const meshAssignments: Array<{ name: string; materials: string[] }> = [];
     root.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
