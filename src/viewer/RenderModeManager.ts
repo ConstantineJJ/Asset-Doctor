@@ -12,6 +12,7 @@ import { getAuthoredMaterialSet } from './AuthoredMaterialState';
 export class RenderModeManager {
   private originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   private temporaryMaterials = new Set<THREE.Material>();
+  private appliedRoots = new Set<THREE.Object3D>();
   private currentMode: RenderMode = 'pbr';
   private uvCheckerTexture: THREE.CanvasTexture | null = null;
   private overlayGroup: THREE.Group;
@@ -26,9 +27,6 @@ export class RenderModeManager {
     if (this.originalMaterials.has(mesh)) return;
     const authored = getAuthoredMaterialSet(mesh) ?? mesh.material;
     this.originalMaterials.set(mesh, authored);
-    // SceneManager historically applied visibility/two-sided presentation tweaks
-    // before registration. Replacing the material set here restores the exact
-    // authored snapshot captured by GLBLoaderService.
     mesh.material = authored;
   }
 
@@ -55,7 +53,6 @@ export class RenderModeManager {
 
   private getOrCreateUvCheckerTexture(): THREE.CanvasTexture {
     if (this.uvCheckerTexture) return this.uvCheckerTexture;
-
     const size = 1024;
     const canvas = document.createElement('canvas');
     canvas.width = size;
@@ -101,8 +98,6 @@ export class RenderModeManager {
   private clearPresentationMaterials() {
     for (const material of this.temporaryMaterials) material.dispose();
     this.temporaryMaterials.clear();
-
-    // Overlay meshes reuse source geometry. Dispose only overlay materials.
     this.overlayGroup.traverse((object) => {
       const renderable = object as THREE.Object3D & { material?: THREE.Material | THREE.Material[] };
       if (Array.isArray(renderable.material)) renderable.material.forEach((material) => material.dispose());
@@ -118,6 +113,10 @@ export class RenderModeManager {
       const original = this.originalMaterials.get(mesh) ?? getAuthoredMaterialSet(mesh);
       if (original) mesh.material = original;
     });
+  }
+
+  private restoreAllOriginals() {
+    for (const [mesh, original] of this.originalMaterials) mesh.material = original;
   }
 
   private sourceMaterial(original: THREE.Material | THREE.Material[]) {
@@ -161,17 +160,25 @@ export class RenderModeManager {
   }
 
   public applyMode(mode: RenderMode, root: THREE.Object3D) {
-    this.currentMode = mode;
+    const modeChanged = mode !== this.currentMode;
+    if (modeChanged) {
+      // One manager can serve several Lineup roots. Clear the old mode once,
+      // then allow sequential applyMode(mode, rootA/rootB/...) calls to append
+      // presentation materials for every root instead of erasing the previous.
+      this.restoreAllOriginals();
+      this.clearPresentationMaterials();
+      this.appliedRoots.clear();
+      this.currentMode = mode;
+    }
 
-    // Always return meshes to authored materials before constructing a new
-    // presentation state. This also prevents Lineup clones from inheriting a
-    // previous diagnostic MeshBasicMaterial as their "source" material.
+    // Same root + same mode is already in the correct presentation state.
+    if (!modeChanged && this.appliedRoots.has(root)) return;
+
     this.restoreOriginals(root);
-    this.clearPresentationMaterials();
-
+    this.appliedRoots.add(root);
     if (mode === 'pbr') return;
-    const uvTex = mode === 'uv-checker' ? this.getOrCreateUvCheckerTexture() : null;
 
+    const uvTex = mode === 'uv-checker' ? this.getOrCreateUvCheckerTexture() : null;
     root.traverse((obj) => {
       if (obj.name?.startsWith('__ascope_internal_')) return;
       if (!(obj as THREE.Mesh).isMesh) return;
@@ -190,7 +197,6 @@ export class RenderModeManager {
             side: THREE.DoubleSide,
           }));
           break;
-
         case 'wireframe':
           mesh.material = this.track(new THREE.MeshBasicMaterial({
             color: 0x38bdf8,
@@ -198,7 +204,6 @@ export class RenderModeManager {
             side: THREE.DoubleSide,
           }));
           break;
-
         case 'wireframe-overlay': {
           mesh.material = original;
           const wireMaterial = this.track(new THREE.MeshBasicMaterial({
@@ -227,7 +232,6 @@ export class RenderModeManager {
           this.overlayGroup.add(wireClone);
           break;
         }
-
         case 'base-color':
           mesh.material = this.track(new THREE.MeshBasicMaterial({
             map: source?.map ?? null,
@@ -235,23 +239,18 @@ export class RenderModeManager {
             side: THREE.DoubleSide,
           }));
           break;
-
         case 'normals':
           mesh.material = this.track(new THREE.MeshNormalMaterial({ side: THREE.DoubleSide }));
           break;
-
         case 'roughness':
           mesh.material = this.channelMaterial(source?.roughnessMap, source?.roughness ?? 0.5, 'g');
           break;
-
         case 'metallic':
           mesh.material = this.channelMaterial(source?.metalnessMap, source?.metalness ?? 0, 'b');
           break;
-
         case 'ao':
           mesh.material = this.channelMaterial(source?.aoMap, source?.aoMapIntensity ?? 1, 'r');
           break;
-
         case 'emissive':
           mesh.material = this.track(new THREE.MeshBasicMaterial({
             color: source?.emissive ? source.emissive.clone() : new THREE.Color(0x000000),
@@ -259,7 +258,6 @@ export class RenderModeManager {
             side: THREE.DoubleSide,
           }));
           break;
-
         case 'uv-checker':
           mesh.material = this.track(new THREE.MeshStandardMaterial({
             map: uvTex,
@@ -268,7 +266,6 @@ export class RenderModeManager {
             side: THREE.DoubleSide,
           }));
           break;
-
         case 'topology-health': {
           mesh.material = this.track(new THREE.MeshStandardMaterial({
             color: 0x334155,
@@ -291,10 +288,9 @@ export class RenderModeManager {
           this.overlayGroup.add(wireClone);
           break;
         }
-
         case 'triangle-density':
-          // Until a true area/density scalar field is implemented, this mode is
-          // deliberately a plain triangle wireframe. UI names it accordingly.
+          // A real scalar density heatmap is not implemented yet. This mode is
+          // intentionally a triangle wireframe and is labelled as such in UI.
           mesh.material = this.track(new THREE.MeshBasicMaterial({
             color: 0xf59e0b,
             wireframe: true,
@@ -307,13 +303,19 @@ export class RenderModeManager {
 
   public resetAll(root: THREE.Object3D) {
     this.restoreOriginals(root);
-    this.clearPresentationMaterials();
-    this.originalMaterials.clear();
-    this.currentMode = 'pbr';
+    this.appliedRoots.delete(root);
+    // Do not dispose shared Lineup presentation state until all roots have been
+    // restored or the manager itself is disposed.
+    if (this.appliedRoots.size === 0) {
+      this.clearPresentationMaterials();
+      this.currentMode = 'pbr';
+    }
   }
 
   public dispose() {
+    this.restoreAllOriginals();
     this.clearPresentationMaterials();
+    this.appliedRoots.clear();
     if (this.uvCheckerTexture) {
       this.uvCheckerTexture.dispose();
       this.uvCheckerTexture = null;
