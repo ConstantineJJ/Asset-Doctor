@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import {
   estimateObjectGeometryBytes,
   nowMs,
@@ -21,6 +23,8 @@ export interface LoadedModelResult {
 export class GLBLoaderService {
   private gltfLoader: GLTFLoader;
   private dracoLoader: DRACOLoader | null = null;
+  private ktx2Loader: KTX2Loader | null = null;
+  private ktx2SupportDetected = false;
   private readonly loadingManager: THREE.LoadingManager;
   private activeResourceErrors: string[] = [];
   private loadSequence: Promise<void> = Promise.resolve();
@@ -31,6 +35,10 @@ export class GLBLoaderService {
       if (!this.activeResourceErrors.includes(url)) this.activeResourceErrors.push(url);
     };
     this.gltfLoader = new GLTFLoader(this.loadingManager);
+
+    // Meshopt is a bundled JS/WASM-free decoder module from the pinned Three.js
+    // package. It has no CDN dependency and is safe for the future Tauri shell.
+    this.gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 
     // Draco is part of the application now. Vite serves the decoder directly
     // from Three's pinned package during development and copies the same files
@@ -44,6 +52,49 @@ export class GLBLoaderService {
       this.gltfLoader.setDRACOLoader(this.dracoLoader);
     } catch (e) {
       console.warn('DRACOLoader initialization notice:', e);
+    }
+
+    // KTX2/BasisU uses the same offline policy. GPU format support must be
+    // detected against a renderer before a KTX2 texture is decoded; callers may
+    // provide their real renderer via configureRenderer(). If they do not (for
+    // example export verification), a tiny temporary renderer is used lazily.
+    try {
+      this.ktx2Loader = new KTX2Loader(this.loadingManager);
+      const transcoderPath = typeof window !== 'undefined'
+        ? new URL('basis/', window.location.href).href
+        : './basis/';
+      this.ktx2Loader.setTranscoderPath(transcoderPath);
+      this.gltfLoader.setKTX2Loader(this.ktx2Loader);
+    } catch (e) {
+      console.warn('KTX2Loader initialization notice:', e);
+    }
+  }
+
+  public configureRenderer(renderer: THREE.WebGLRenderer) {
+    if (!this.ktx2Loader || this.ktx2SupportDetected) return;
+    this.ktx2Loader.detectSupport(renderer);
+    this.ktx2SupportDetected = true;
+  }
+
+  private ensureKtx2Support(sourceAudit: GltfSourceAudit) {
+    if (!sourceAudit.extensionsUsed.includes('KHR_texture_basisu')) return;
+    if (!this.ktx2Loader) {
+      throw new Error('KTX2/BasisU texture support is unavailable in this build.');
+    }
+    if (this.ktx2SupportDetected) return;
+    if (typeof document === 'undefined') {
+      throw new Error('KTX2/BasisU decoding requires WebGL renderer capability detection.');
+    }
+
+    // Export verification and other non-viewport loader instances may not own a
+    // renderer. Detect support once using a minimal temporary context; the KTX2
+    // worker configuration does not retain this renderer afterwards.
+    const probe = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'low-power' });
+    try {
+      this.configureRenderer(probe);
+    } finally {
+      probe.dispose();
+      probe.forceContextLoss();
     }
   }
 
@@ -91,6 +142,7 @@ export class GLBLoaderService {
     sourceAudit: GltfSourceAudit = auditGltfSource(buffer)
   ): Promise<LoadedModelResult> {
     this.activeResourceErrors = [];
+    this.ensureKtx2Support(sourceAudit);
     return new Promise((resolve, reject) => {
       this.gltfLoader.parse(
         buffer,
@@ -148,6 +200,10 @@ export class GLBLoaderService {
     if (this.dracoLoader) {
       this.dracoLoader.dispose();
       this.dracoLoader = null;
+    }
+    if (this.ktx2Loader) {
+      this.ktx2Loader.dispose();
+      this.ktx2Loader = null;
     }
   }
 }
