@@ -1,7 +1,9 @@
 import * as THREE from 'three';
+import { RenderModeManager } from './RenderModeManager';
 import {
   cloneGeometryForSmoothShading,
   cloneMaterialForShading,
+  setShadingMode,
 } from './ShadingMode';
 
 interface TestResult {
@@ -102,6 +104,37 @@ export function runShadingModeTests(): TestResult[] {
 
     clone?.dispose();
     geometry.dispose();
+  }
+
+  {
+    setShadingMode('hybrid');
+    const scene = new THREE.Scene();
+    const manager = new RenderModeManager(scene);
+    const sourceGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const sourceMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const mesh = new THREE.Mesh(sourceGeometry, sourceMaterial);
+    const root = new THREE.Group();
+    root.add(mesh);
+    manager.registerMesh(mesh);
+    manager.applyMode('pbr', root);
+
+    const hybridUsesSource = mesh.geometry === sourceGeometry && mesh.material === sourceMaterial;
+    setShadingMode('smooth');
+    const smoothUsesPresentation = mesh.geometry !== sourceGeometry && mesh.material !== sourceMaterial;
+    setShadingMode('hybrid');
+    const hybridRestoredSource = mesh.geometry === sourceGeometry && mesh.material === sourceMaterial;
+
+    results.push({
+      name: 'RenderModeManager owns shading rebuilds and restores authored PBR state',
+      passed: hybridUsesSource && smoothUsesPresentation && hybridRestoredSource,
+      actual: `${hybridUsesSource}/${smoothUsesPresentation}/${hybridRestoredSource}`,
+      expected: 'true/true/true',
+    });
+
+    manager.dispose();
+    sourceMaterial.dispose();
+    sourceGeometry.dispose();
+    setShadingMode('hybrid');
   }
 
   return results;
