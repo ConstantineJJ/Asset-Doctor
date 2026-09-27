@@ -55,8 +55,12 @@ import type {
   TopologyStats,
 } from './types';
 
+type PendingAssetSwitch =
+  | { kind: 'file'; file: File }
+  | { kind: 'sample'; sampleId: string };
+
 export function App() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   // Scene & Service instances
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const loaderServiceRef = useRef<GLBLoaderService | null>(null);
@@ -78,6 +82,7 @@ export function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [fileSizeBytes, setFileSizeBytes] = useState<number | undefined>(undefined);
+  const [pendingAssetSwitch, setPendingAssetSwitch] = useState<PendingAssetSwitch | null>(null);
 
   // Analysis & Diagnostic States
   const [summary, setSummary] = useState<AssetSummary | null>(null);
@@ -486,6 +491,7 @@ export function App() {
           },
         });
         sceneManagerRef.current = mgr;
+        loaderServiceRef.current?.configureRenderer(mgr.renderer);
 
         // FPS polling
         const fpsInterval = setInterval(() => {
@@ -519,7 +525,7 @@ export function App() {
   }, [selectedUuid, treeRoot]);
 
   // File Handlers
-  const handleOpenFile = async (file: File) => {
+  const openFileNow = async (file: File) => {
     if (!loaderServiceRef.current) return;
     try {
       setIsLoading(true);
@@ -539,10 +545,10 @@ export function App() {
     }
   };
 
-  const handleSelectSample = (sampleId: string) => {
+  const selectSampleNow = async (sampleId: string) => {
     if (sampleId !== 'test-patient') return;
     const sample = createAssetDoctorTestPatient();
-    loadAsset(
+    await loadAsset(
       sample.root,
       sample.animations,
       'Asset_Doctor_Test_Patient.glb',
@@ -999,6 +1005,69 @@ export function App() {
     }
   };
 
+  const canExportRepaired = Boolean(
+    activeRepairReports.length > 0 &&
+    activeRepairReports.every(
+      (report) => report.status === 'VERIFIED' && report.pipeline === 'complete' && !report.undoneAt
+    ) &&
+    currentExportSourceRef.current
+  );
+  const hasUnsavedRepairs = Boolean(
+    activeRepairReports.length > 0 && exportResultRef.current?.report.status !== 'VERIFIED'
+  );
+
+  const runAssetSwitch = async (pending: PendingAssetSwitch) => {
+    if (pending.kind === 'file') await openFileNow(pending.file);
+    else await selectSampleNow(pending.sampleId);
+  };
+
+  const requestOpenFile = (file: File) => {
+    if (hasUnsavedRepairs) {
+      setPendingAssetSwitch({ kind: 'file', file });
+      return;
+    }
+    void openFileNow(file);
+  };
+
+  const requestSelectSample = (sampleId: string) => {
+    if (hasUnsavedRepairs) {
+      setPendingAssetSwitch({ kind: 'sample', sampleId });
+      return;
+    }
+    void selectSampleNow(sampleId);
+  };
+
+  const handleDiscardAndSwitch = async () => {
+    const pending = pendingAssetSwitch;
+    if (!pending) return;
+    setPendingAssetSwitch(null);
+    await runAssetSwitch(pending);
+  };
+
+  const handleExportAndSwitch = async () => {
+    const pending = pendingAssetSwitch;
+    const service = exportServiceRef.current;
+    if (!pending || !service || !canExportRepaired || exportBusy) return;
+
+    const result = await handleBuildRepairedExport();
+    if (!result || result.report.status !== 'VERIFIED') return;
+    service.download(result);
+    setPendingAssetSwitch(null);
+    await runAssetSwitch(pending);
+  };
+
+  // Browser close/reload cannot offer our three-button modal, but it can still
+  // prevent silent loss and hand the final decision back to the user.
+  useEffect(() => {
+    if (!hasUnsavedRepairs) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedRepairs]);
+
   // Animation Handlers
   const handleSelectClip = (idx: number) => {
     if (!Number.isInteger(idx) || idx < 0 || idx >= animationClips.length) return;
@@ -1070,23 +1139,15 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [renderMode]);
 
-  const canExportRepaired = Boolean(
-    activeRepairReports.length > 0 &&
-    activeRepairReports.every(
-      (report) => report.status === 'VERIFIED' && report.pipeline === 'complete' && !report.undoneAt
-    ) &&
-    currentExportSourceRef.current
-  );
-
   return (
     <div className="flex flex-col h-screen w-screen bg-[#131518] text-gray-100 overflow-hidden font-sans select-none">
       {/* Top Application Toolbar */}
       <TopToolbar
-        onOpenFile={handleOpenFile}
+        onOpenFile={requestOpenFile}
         onExport={handleToolbarExport}
         canExport={canExportRepaired}
         exportBusy={exportBusy}
-        onSelectSample={handleSelectSample}
+        onSelectSample={requestSelectSample}
         renderMode={renderMode}
         onSetRenderMode={handleSetRenderMode}
         lightingPreset={lightingPreset}
@@ -1121,7 +1182,7 @@ export function App() {
         {/* Center: 3D Viewport with Drag & Drop */}
         <Viewport
           onCanvasMount={handleCanvasMount}
-          onFileDrop={handleOpenFile}
+          onFileDrop={requestOpenFile}
           isLoading={isLoading}
           fileName={fileName}
           renderMode={renderMode}
@@ -1207,6 +1268,53 @@ export function App() {
         isOpen={isTestModalOpen}
         onClose={() => setIsTestModalOpen(false)}
       />
+
+      {pendingAssetSwitch && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-amber-800/70 bg-[#1a1d23] p-4 shadow-2xl">
+            <div className="text-sm font-semibold text-amber-200">
+              {language === 'ru' ? 'Есть неэкспортированные исправления' : 'Unsaved repaired changes'}
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-gray-300">
+              {language === 'ru'
+                ? 'Текущий Heal-сеанс содержит изменения, которые ещё не сохранены как проверенная repaired copy. Перед открытием другой модели выберите, что с ними сделать.'
+                : 'The current Heal session contains changes that have not been saved as a verified repaired copy. Choose what to do before opening another asset.'}
+            </p>
+            {!canExportRepaired && (
+              <p className="mt-2 text-[10px] leading-relaxed text-amber-400/80">
+                {language === 'ru'
+                  ? 'Экспорт пока недоступен: текущий repair-сеанс должен быть полностью VERIFIED. Можно отменить переход или отбросить изменения.'
+                  : 'Export is not available yet: the current repair session must be fully VERIFIED. You can cancel the switch or discard the changes.'}
+              </p>
+            )}
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                onClick={() => setPendingAssetSwitch(null)}
+                disabled={exportBusy}
+                className="rounded border border-[#3a404c] bg-[#232730] px-3 py-2 text-xs text-gray-300 hover:bg-[#2c313b] disabled:opacity-50"
+              >
+                {language === 'ru' ? 'Отмена' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => { void handleDiscardAndSwitch(); }}
+                disabled={exportBusy}
+                className="rounded border border-rose-800/70 bg-rose-950/35 px-3 py-2 text-xs text-rose-200 hover:bg-rose-950/55 disabled:opacity-50"
+              >
+                {language === 'ru' ? 'Отбросить и открыть' : 'Discard and open'}
+              </button>
+              <button
+                onClick={() => { void handleExportAndSwitch(); }}
+                disabled={!canExportRepaired || exportBusy}
+                className="rounded border border-cyan-700 bg-cyan-950/45 px-3 py-2 text-xs font-medium text-cyan-100 hover:bg-cyan-950/65 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {exportBusy
+                  ? (language === 'ru' ? 'Экспорт…' : 'Exporting…')
+                  : (language === 'ru' ? 'Экспортировать и открыть' : 'Export and open')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
