@@ -91,10 +91,14 @@ export class CompareSceneManager {
   private readonly manualScales = new Map<string, number>();
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
+  private rightMouseDown = false;
 
   private readonly onPointerDownBound: (event: PointerEvent) => void;
+  private readonly onPointerUpBound: (event: PointerEvent) => void;
   private readonly onDoubleClickBound: (event: MouseEvent) => void;
   private readonly onWheelBound: (event: WheelEvent) => void;
+  private readonly onContextMenuBound: (event: MouseEvent) => void;
+  private readonly onWindowBlurBound: () => void;
   private readonly onResizeBound: () => void;
 
   constructor(container: HTMLElement, callbacks: CompareSceneManagerCallbacks = {}) {
@@ -120,12 +124,23 @@ export class CompareSceneManager {
     container.appendChild(this.renderer.domElement);
 
     this.onPointerDownBound = (event) => this.handlePointerDown(event);
+    this.onPointerUpBound = (event) => this.handlePointerUp(event);
     this.onDoubleClickBound = (event) => this.handleDoubleClick(event);
     this.onWheelBound = (event) => this.handleWheel(event);
+    this.onContextMenuBound = (event) => {
+      if (this.viewMode === 'lineup') event.preventDefault();
+    };
+    this.onWindowBlurBound = () => { this.rightMouseDown = false; };
     this.onResizeBound = () => this.resize();
     this.renderer.domElement.addEventListener('pointerdown', this.onPointerDownBound);
     this.renderer.domElement.addEventListener('dblclick', this.onDoubleClickBound);
-    this.renderer.domElement.addEventListener('wheel', this.onWheelBound, { passive: false });
+    // Capture-phase wheel handling is deliberate. When RMB is held in Lineup,
+    // model scaling owns the wheel completely and OrbitControls must never see
+    // that same event as camera dolly/zoom.
+    this.renderer.domElement.addEventListener('wheel', this.onWheelBound, { passive: false, capture: true });
+    this.renderer.domElement.addEventListener('contextmenu', this.onContextMenuBound);
+    window.addEventListener('pointerup', this.onPointerUpBound);
+    window.addEventListener('blur', this.onWindowBlurBound);
     window.addEventListener('resize', this.onResizeBound);
     this.startRenderLoop();
   }
@@ -135,6 +150,8 @@ export class CompareSceneManager {
     if (active) {
       this.clock.getDelta();
       this.resize();
+    } else {
+      this.rightMouseDown = false;
     }
     this.updateControlEnablement();
   }
@@ -184,6 +201,7 @@ export class CompareSceneManager {
 
   public setViewMode(mode: CompareViewMode) {
     this.viewMode = mode;
+    this.rightMouseDown = false;
     if (mode === 'lineup') {
       // Lineup is presentation-only. Rebuild from authored source each time we
       // enter it instead of reusing stale clones created while Grid was active.
@@ -317,9 +335,12 @@ export class CompareSceneManager {
     if (this.animationFrameId !== null) cancelAnimationFrame(this.animationFrameId);
     this.animationFrameId = null;
     window.removeEventListener('resize', this.onResizeBound);
+    window.removeEventListener('pointerup', this.onPointerUpBound);
+    window.removeEventListener('blur', this.onWindowBlurBound);
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointerDownBound);
     this.renderer.domElement.removeEventListener('dblclick', this.onDoubleClickBound);
-    this.renderer.domElement.removeEventListener('wheel', this.onWheelBound);
+    this.renderer.domElement.removeEventListener('wheel', this.onWheelBound, true);
+    this.renderer.domElement.removeEventListener('contextmenu', this.onContextMenuBound);
 
     this.clearSlotRuntimes();
     this.clearLineup();
@@ -707,6 +728,7 @@ export class CompareSceneManager {
 
   private handlePointerDown(event: PointerEvent) {
     if (this.viewMode === 'lineup') {
+      if (event.button === 2) this.rightMouseDown = true;
       const asset = this.hitLineupAsset(event);
       if (asset) this.setActiveAssetId(asset.id);
       return;
@@ -718,6 +740,10 @@ export class CompareSceneManager {
     this.activeAssetId = asset.id;
     this.callbacks.onActiveAssetChange?.(asset.id);
     this.updateControlEnablement(hit.index);
+  }
+
+  private handlePointerUp(event: PointerEvent) {
+    if (event.button === 2 || (event.buttons & 2) === 0) this.rightMouseDown = false;
   }
 
   private handleDoubleClick(event: MouseEvent) {
@@ -737,10 +763,15 @@ export class CompareSceneManager {
   }
 
   private handleWheel(event: WheelEvent) {
-    if (this.viewMode !== 'lineup' || !event.altKey) return;
+    if (this.viewMode !== 'lineup' || !this.rightMouseDown) return;
+
+    // RMB + wheel is reserved for presentation scaling. Stop the wheel before
+    // OrbitControls can interpret it as camera dolly/zoom.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
     const asset = this.hitLineupAsset(event);
     if (!asset) return;
-    event.preventDefault();
     const current = this.manualScales.get(asset.id) ?? 1;
     const factor = event.deltaY < 0 ? 1.05 : 1 / 1.05;
     this.setManualScale(asset.id, current * factor, false);
