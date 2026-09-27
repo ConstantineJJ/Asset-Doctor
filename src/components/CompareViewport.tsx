@@ -121,6 +121,10 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       },
     });
     managerRef.current = manager;
+    // KTX2 needs a renderer only to detect the GPU target texture formats.
+    // Reuse Compare's existing WebGLRenderer instead of creating a temporary
+    // context when the first KTX2 asset is added to the comparison session.
+    loaderRef.current.configureRenderer(manager.renderer);
     manager.setActive(open);
     manager.setRenderMode(renderMode);
     manager.setLightingPreset(lightingPreset);
