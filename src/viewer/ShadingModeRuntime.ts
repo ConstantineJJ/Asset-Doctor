@@ -18,10 +18,6 @@ type PatchedRenderModeManager = RenderModeManager & {
   __assetDoctorShadingRuntime?: ManagerRuntimeState;
 };
 
-const prototype = RenderModeManager.prototype as RenderModeManager['applyMode'] extends never
-  ? never
-  : RenderModeManager['prototype'] & { __assetDoctorShadingPatched?: boolean };
-
 const proto = RenderModeManager.prototype as typeof RenderModeManager.prototype & {
   __assetDoctorShadingPatched?: boolean;
 };
