@@ -112,9 +112,9 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
       <div className="flex items-center gap-1.5 shrink-0">
         <div className="flex items-center gap-2 pr-2 border-r border-[#2d313a]">
           <img
-            src="/asset-doctor-icon.jpg"
+            src="/asset-doctor-icon.png"
             alt="Asset Doctor"
-            className="w-6 h-6 rounded object-cover shadow-sm"
+            className="w-6 h-6 object-contain shadow-sm"
           />
           <span className="font-bold tracking-tight text-gray-100 hidden xl:inline text-sm">
             Asset <span className="text-cyan-400 font-light">Doctor</span>
