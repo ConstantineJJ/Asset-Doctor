@@ -40,7 +40,9 @@ export function setShadingMode(mode: ShadingMode) {
 
 export function subscribeShadingMode(listener: (mode: ShadingMode) => void) {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export type FlatShadingMaterial = THREE.Material & { flatShading: boolean };
