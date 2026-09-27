@@ -141,7 +141,7 @@ export const CompareInspectorPanel: React.FC<CompareInspectorPanelProps> = ({ sn
 
         <div className="rounded border border-[#2d313a] bg-[#17191e] p-2 text-[9px] leading-relaxed text-gray-500">
           <div className="mb-1 flex items-center gap-1 text-gray-400"><Gauge className="w-3 h-3" /> Compare mode is view-only.</div>
-          Click a model to select it. Use the large Doctor button to open that selected source as a fresh Doctor asset. In Lineup, hold <span className="text-gray-300">Alt + mouse wheel</span> over a model for presentation-only size adjustment.
+          Click a model to select it. Use the large Doctor button to open that selected source as a fresh Doctor asset. In Lineup, hold <span className="text-gray-300">RMB + mouse wheel</span> over a model for presentation-only size adjustment.
         </div>
       </div>
     </aside>
