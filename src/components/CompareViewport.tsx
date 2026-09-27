@@ -19,6 +19,7 @@ import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
 import { analyzeTextures } from '../analysis/TextureAnalyzer';
 import { CompareSceneManager } from '../viewer/CompareSceneManager';
 import { CompareInspectorPanel } from './CompareInspectorPanel';
+import { CompareSceneTreePanel } from './CompareSceneTreePanel';
 import type { LightingPreset, RenderMode } from '../types';
 import type {
   CompareAssetRecord,
@@ -252,6 +253,21 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
     handleFiles(event.dataTransfer.files);
   };
 
+  const handleWheelCapture = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!open || viewMode !== 'lineup' || !event.altKey) return;
+
+    // CompareSceneManager's own wheel listener still needs to receive the event
+    // so it can scale the model under the pointer. Temporarily disabling controls
+    // prevents OrbitControls from interpreting that same wheel event as camera zoom.
+    event.preventDefault();
+    const manager = managerRef.current;
+    if (!manager) return;
+    manager.setActive(false);
+    queueMicrotask(() => {
+      if (managerRef.current === manager && open) manager.setActive(true);
+    });
+  };
+
   const activeAsset = assets.find((asset) => asset.id === activeAssetId) ?? assets[0] ?? null;
   const anyAnimations = assets.some((asset) => asset.animations.length > 0);
 
@@ -260,6 +276,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       className={`absolute inset-0 z-50 bg-[#111318] text-gray-100 transition-opacity duration-150 ${
         open ? 'visible opacity-100' : 'invisible pointer-events-none opacity-0'
       }`}
+      onWheelCapture={handleWheelCapture}
       onDragOver={(event) => {
         if (!open) return;
         event.preventDefault();
@@ -553,6 +570,19 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
           ? 'Click model to select · Alt + wheel over model = manual size · Render mode stays linked to top toolbar'
           : 'Click a cell to select · Double-click for Solo · cameras use normalized framing'}
       </div>
+
+      {/* Compare owns read-only side panels while active. The Doctor hierarchy
+          remains untouched underneath and returns exactly as it was on close. */}
+      {open && (
+        <div className="fixed left-0 top-12 bottom-0 z-[70]">
+          <CompareSceneTreePanel
+            assetId={activeAsset?.id ?? null}
+            root={activeAsset?.root ?? null}
+            fileName={activeAsset?.fileName}
+            slot={activeAsset?.slot}
+          />
+        </div>
+      )}
 
       {/* Fixed panel deliberately covers the Doctor inspector while Compare is active.
           It is not another floating viewport overlay, so the fifth model stays visible. */}
