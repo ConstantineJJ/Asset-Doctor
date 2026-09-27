@@ -5,6 +5,7 @@ import { runSourceFidelityTests } from '../src/analysis/SourceFidelityTests';
 import { runCompareLayoutTests } from '../src/compare/CompareLayoutTests';
 import { runGltfSourceAuditTests } from '../src/loaders/GltfSourceAuditTests';
 import { runAuthoredMaterialStateTests } from '../src/viewer/AuthoredMaterialStateTests';
+import { runShadingModeTests } from '../src/viewer/ShadingModeTests';
 import {
   runSurgicalHealIntegrationTests,
   runSurgicalHealTests,
@@ -19,6 +20,7 @@ async function main() {
     ...runCompareLayoutTests(),
     ...runGltfSourceAuditTests(),
     ...runAuthoredMaterialStateTests(),
+    ...runShadingModeTests(),
     ...runSurgicalHealTests(),
     ...(await runSurgicalHealIntegrationTests()),
   ];
