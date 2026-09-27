@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { cloneMaterialForShading } from './ShadingMode';
+import {
+  cloneGeometryForSmoothShading,
+  cloneMaterialForShading,
+} from './ShadingMode';
 
 interface TestResult {
   name: string;
@@ -7,6 +10,8 @@ interface TestResult {
   actual?: string;
   expected?: string;
 }
+
+const near = (value: number, expected: number, epsilon = 1e-4) => Math.abs(value - expected) <= epsilon;
 
 export function runShadingModeTests(): TestResult[] {
   const results: TestResult[] = [];
@@ -49,6 +54,54 @@ export function runShadingModeTests(): TestResult[] {
       expected: 'null',
     });
     source.dispose();
+  }
+
+  {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+      0, 0, 0,
+      1, 0, 0,
+      0, 1, 0,
+      0, 0, 0,
+      0, 0, 1,
+      1, 0, 0,
+    ], 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+      0, 0, 1,
+      0, 0, 1,
+      0, 0, 1,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+    ], 3));
+
+    const clone = cloneGeometryForSmoothShading(geometry);
+    const cloneNormals = clone?.getAttribute('normal');
+    const sourceNormals = geometry.getAttribute('normal');
+    const expected = Math.SQRT1_2;
+    const smoothedAcrossSplit = Boolean(
+      cloneNormals
+      && near(cloneNormals.getY(0), expected)
+      && near(cloneNormals.getZ(0), expected)
+      && near(cloneNormals.getY(3), expected)
+      && near(cloneNormals.getZ(3), expected)
+    );
+    const sourceUntouched = sourceNormals.getY(0) === 0
+      && sourceNormals.getZ(0) === 1
+      && sourceNormals.getY(3) === 1
+      && sourceNormals.getZ(3) === 0;
+
+    results.push({
+      name: 'Smooth shading recomputes coincident split normals on a presentation geometry clone',
+      passed: Boolean(clone && clone !== geometry && smoothedAcrossSplit && sourceUntouched),
+      actual: cloneNormals
+        ? `${cloneNormals.getY(0).toFixed(3)},${cloneNormals.getZ(0).toFixed(3)} / source ${sourceNormals.getY(0)},${sourceNormals.getZ(0)}`
+        : 'no clone',
+      expected: '0.707,0.707 / source 0,1',
+    });
+
+    clone?.dispose();
+    geometry.dispose();
   }
 
   return results;

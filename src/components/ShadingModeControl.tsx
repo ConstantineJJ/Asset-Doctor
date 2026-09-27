@@ -35,8 +35,8 @@ export const ShadingModeControl: React.FC = () => {
   if (!host) return null;
 
   const title = language === 'ru'
-    ? 'Шейдинг: Hybrid сохраняет авторские нормали, Smooth использует сглаживание по вершинам, Flat показывает грани.'
-    : 'Shading: Hybrid preserves authored normals, Smooth uses vertex smoothing, Flat shows per-face shading.';
+    ? 'Шейдинг: Hybrid показывает авторские нормали, Smooth временно пересчитывает сглаженные нормали, Flat показывает каждую грань отдельно.'
+    : 'Shading: Hybrid shows authored normals, Smooth temporarily recomputes smooth normals, Flat shows each face separately.';
 
   return createPortal(
     <>

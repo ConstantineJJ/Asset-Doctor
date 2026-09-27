@@ -2,16 +2,24 @@ import * as THREE from 'three';
 import type { RenderMode } from '../types';
 import { RenderModeManager } from './RenderModeManager';
 import {
+  cloneGeometryForSmoothShading,
   cloneMaterialForShading,
   getShadingMode,
   subscribeShadingMode,
   type ShadingMode,
 } from './ShadingMode';
 
+interface RootShadingState {
+  materials: Set<THREE.Material>;
+  materialSources: Map<THREE.Mesh, THREE.Material | THREE.Material[]>;
+  geometries: Set<THREE.BufferGeometry>;
+  geometrySources: Map<THREE.Mesh, THREE.BufferGeometry>;
+}
+
 interface ManagerRuntimeState {
   roots: Set<THREE.Object3D>;
   lastRenderMode: RenderMode;
-  shadingMaterials: Map<THREE.Object3D, Set<THREE.Material>>;
+  shading: Map<THREE.Object3D, RootShadingState>;
 }
 
 type PatchedRenderModeManager = RenderModeManager & {
@@ -35,7 +43,7 @@ if (!proto.__assetDoctorShadingPatched) {
       manager.__assetDoctorShadingRuntime = {
         roots: new Set(),
         lastRenderMode: 'pbr',
-        shadingMaterials: new Map(),
+        shading: new Map(),
       };
       managers.add(manager);
     }
@@ -43,14 +51,21 @@ if (!proto.__assetDoctorShadingPatched) {
   };
 
   const disposeRootShading = (runtime: ManagerRuntimeState, root: THREE.Object3D) => {
-    const materials = runtime.shadingMaterials.get(root);
-    if (!materials) return;
-    for (const material of materials) material.dispose();
-    runtime.shadingMaterials.delete(root);
+    const state = runtime.shading.get(root);
+    if (!state) return;
+
+    // Restore the exact render-mode presentation that was underneath the shading
+    // override before disposing our temporary resources. This keeps same-mode
+    // applyMode calls from cloning or displaying already-disposed materials.
+    for (const [mesh, material] of state.materialSources) mesh.material = material;
+    for (const [mesh, geometry] of state.geometrySources) mesh.geometry = geometry;
+    for (const material of state.materials) material.dispose();
+    for (const geometry of state.geometries) geometry.dispose();
+    runtime.shading.delete(root);
   };
 
   const disposeAllShading = (runtime: ManagerRuntimeState) => {
-    for (const root of [...runtime.shadingMaterials.keys()]) disposeRootShading(runtime, root);
+    for (const root of [...runtime.shading.keys()]) disposeRootShading(runtime, root);
   };
 
   const applyPresentationShading = (
@@ -61,23 +76,51 @@ if (!proto.__assetDoctorShadingPatched) {
     disposeRootShading(runtime, root);
     if (shadingMode === 'hybrid') return;
 
-    const clones = new Set<THREE.Material>();
+    const state: RootShadingState = {
+      materials: new Set(),
+      materialSources: new Map(),
+      geometries: new Set(),
+      geometrySources: new Map(),
+    };
+    const smoothGeometryBySource = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
+
     root.traverse((object) => {
       if (!(object as THREE.Mesh).isMesh || object.name?.startsWith('__ascope_internal_')) return;
       const mesh = object as THREE.Mesh;
-      const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const materialSource = mesh.material;
+      const sourceMaterials = Array.isArray(materialSource) ? materialSource : [materialSource];
       let changed = false;
-      const next = source.map((material) => {
+      const nextMaterials = sourceMaterials.map((material) => {
         const clone = cloneMaterialForShading(material, shadingMode);
         if (!clone) return material;
-        clones.add(clone);
+        state.materials.add(clone);
         changed = true;
         return clone;
       });
-      if (changed) mesh.material = Array.isArray(mesh.material) ? next : next[0];
+
+      if (!changed) return;
+
+      state.materialSources.set(mesh, materialSource);
+      mesh.material = Array.isArray(materialSource) ? nextMaterials : nextMaterials[0];
+
+      if (shadingMode === 'smooth') {
+        const geometrySource = mesh.geometry;
+        let smoothGeometry = smoothGeometryBySource.get(geometrySource);
+        if (!smoothGeometry) {
+          smoothGeometry = cloneGeometryForSmoothShading(geometrySource) ?? undefined;
+          if (smoothGeometry) {
+            smoothGeometryBySource.set(geometrySource, smoothGeometry);
+            state.geometries.add(smoothGeometry);
+          }
+        }
+        if (smoothGeometry) {
+          state.geometrySources.set(mesh, geometrySource);
+          mesh.geometry = smoothGeometry;
+        }
+      }
     });
 
-    if (clones.size > 0) runtime.shadingMaterials.set(root, clones);
+    if (state.materials.size > 0 || state.geometries.size > 0) runtime.shading.set(root, state);
   };
 
   RenderModeManager.prototype.applyMode = function patchedApplyMode(mode, root) {
