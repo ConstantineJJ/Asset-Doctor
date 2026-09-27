@@ -76,6 +76,24 @@ export function runGltfSourceAuditTests(): TestResult[] {
     expected: [2, 1, 1, 1],
   });
 
+  const compressionPolicy = auditGltfSource(makeGlb({
+    asset: { version: '2.0' },
+    extensionsUsed: [
+      'KHR_draco_mesh_compression',
+      'EXT_meshopt_compression',
+      'KHR_texture_basisu',
+    ],
+    buffers: [{ byteLength: 4 }],
+  }, new Uint8Array(4)));
+  results.push({
+    name: 'Draco and Meshopt are transport-only while KTX2 remains export-protected',
+    passed:
+      compressionPolicy.semanticExtensions.length === 1 &&
+      compressionPolicy.semanticExtensions[0] === 'KHR_texture_basisu',
+    actual: compressionPolicy.semanticExtensions,
+    expected: ['KHR_texture_basisu'],
+  });
+
   const gltf = new TextEncoder().encode(JSON.stringify({
     asset: { version: '2.0' },
     buffers: [{ uri: 'mesh.bin', byteLength: 12 }],
