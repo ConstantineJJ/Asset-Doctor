@@ -253,21 +253,6 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
     handleFiles(event.dataTransfer.files);
   };
 
-  const handleWheelCapture = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!open || viewMode !== 'lineup' || !event.altKey) return;
-
-    // CompareSceneManager's own wheel listener still needs to receive the event
-    // so it can scale the model under the pointer. Temporarily disabling controls
-    // prevents OrbitControls from interpreting that same wheel event as camera zoom.
-    event.preventDefault();
-    const manager = managerRef.current;
-    if (!manager) return;
-    manager.setActive(false);
-    queueMicrotask(() => {
-      if (managerRef.current === manager && open) manager.setActive(true);
-    });
-  };
-
   const activeAsset = assets.find((asset) => asset.id === activeAssetId) ?? assets[0] ?? null;
   const anyAnimations = assets.some((asset) => asset.animations.length > 0);
 
@@ -276,7 +261,6 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       className={`absolute inset-0 z-50 bg-[#111318] text-gray-100 transition-opacity duration-150 ${
         open ? 'visible opacity-100' : 'invisible pointer-events-none opacity-0'
       }`}
-      onWheelCapture={handleWheelCapture}
       onDragOver={(event) => {
         if (!open) return;
         event.preventDefault();
@@ -567,7 +551,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
 
       <div className="pointer-events-none absolute bottom-3 left-3 z-10 text-[9px] text-gray-500">
         {viewMode === 'lineup'
-          ? 'Click model to select · Alt + wheel over model = manual size · Render mode stays linked to top toolbar'
+          ? 'Click model to select · Hold RMB + wheel over model = manual size · Render mode stays linked to top toolbar'
           : 'Click a cell to select · Double-click for Solo · cameras use normalized framing'}
       </div>
 
