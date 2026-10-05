@@ -14,6 +14,7 @@ import { copyGeometryData } from '../heal/GeometryRemap';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
 import { estimateObjectGeometryBytes, nowMs } from '../performance/PerformanceProfiler';
+import { saveBinaryFile } from '../platform/FileIO';
 
 export type ExportSampleId = 'test-patient';
 
@@ -382,17 +383,8 @@ export class RepairedExportService {
     }
   }
 
-  public download(result: RepairedExportResult) {
-    const blob = new Blob([result.buffer], { type: 'model/gltf-binary' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = result.fileName;
-    anchor.style.display = 'none';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+  public download(result: RepairedExportResult): Promise<boolean> {
+    return saveBinaryFile(result.fileName, result.buffer);
   }
 
   private async createFreshAsset(source: ExportSourceDescriptor): Promise<FreshAsset> {

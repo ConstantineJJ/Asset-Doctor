@@ -21,6 +21,7 @@ import type { LightingPreset, RenderMode, SurfaceType } from '../types';
 import { useI18n } from '../i18n';
 
 interface TopToolbarProps {
+  onPickFile?: () => void;
   onOpenFile: (file: File) => void;
   onExport: () => void;
   canExport: boolean;
@@ -57,6 +58,7 @@ interface TopToolbarProps {
 }
 
 export const TopToolbar: React.FC<TopToolbarProps> = ({
+  onPickFile,
   onOpenFile,
   onExport,
   canExport,
@@ -142,7 +144,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 
         <div className="flex items-center gap-2 pr-2 border-r border-[#2d313a]">
           <img
-            src="/asset-doctor-icon.png"
+            src="/asset-doctor-icon.svg"
             alt="Asset Doctor"
             className="w-6 h-6 object-contain shadow-sm"
           />
@@ -153,7 +155,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 
         <button
           id="btn-open-file"
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => onPickFile ? onPickFile() : fileInputRef.current?.click()}
           className="flex items-center gap-1.5 px-2 py-1.5 rounded bg-[#252830] hover:bg-[#2e323c] border border-[#373b46] text-gray-100 font-medium transition cursor-pointer"
           title={t('toolbar.openFileTitle')}
         >

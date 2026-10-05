@@ -20,6 +20,8 @@ import {
   X,
 } from 'lucide-react';
 import { GLBLoaderService } from '../loaders/GLBLoaderService';
+import { disposeModelResources } from '../loaders/ModelResources';
+import { isDesktop, pickModelFiles } from '../platform/FileIO';
 import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
 import { analyzeTextures } from '../analysis/TextureAnalyzer';
 import { CompareSceneManager } from '../viewer/CompareSceneManager';
@@ -67,6 +69,8 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loaderRef = useRef<GLBLoaderService | null>(null);
   const managerRef = useRef<CompareSceneManager | null>(null);
+  const addingFilesRef = useRef(false);
+  const pickingFilesRef = useRef(false);
 
   const [assets, setAssets] = useState<CompareAssetRecord[]>([]);
   const [viewMode, setViewMode] = useState<CompareViewMode>('grid');
@@ -234,6 +238,10 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   const addFiles = async (files: File[]) => {
     const loader = loaderRef.current;
     if (!loader || files.length === 0) return;
+    if (addingFilesRef.current) {
+      setLoadError('Wait for the current imports to finish before adding more models.');
+      return;
+    }
 
     const accepted = files.filter((file) => /\.(glb|gltf)$/i.test(file.name));
     const available = Math.max(0, 8 - assets.length);
@@ -244,6 +252,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
     }
 
     setLoading(true);
+    addingFilesRef.current = true;
     setLoadError(null);
     const loaded: CompareAssetRecord[] = [];
 
@@ -253,6 +262,12 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       await new Promise<void>((resolve) => setTimeout(resolve, 25));
       try {
         const result = await loader.loadFromFile(file);
+        if (loaderRef.current !== loader) {
+          disposeModelResources(result.root);
+          loaded.forEach((asset) => disposeModelResources(asset.root));
+          addingFilesRef.current = false;
+          return;
+        }
         const summary = analyzeGeometry(result.root, result.fileName, result.fileSizeBytes);
         const textures = analyzeTextures(result.root);
         const id = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -288,6 +303,20 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       });
     }
     setLoading(false);
+    addingFilesRef.current = false;
+  };
+
+  const pickFiles = async () => {
+    if (!isDesktop()) { fileInputRef.current?.click(); return; }
+    if (pickingFilesRef.current || addingFilesRef.current) return;
+    pickingFilesRef.current = true;
+    try {
+      await addFiles(await pickModelFiles(true));
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      pickingFilesRef.current = false;
+    }
   };
 
   const removeAsset = (assetId: string) => {
@@ -429,7 +458,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
           </button>
 
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => void pickFiles()}
             disabled={assets.length >= 8 || loading}
             className="flex items-center gap-1 rounded border border-cyan-900 bg-cyan-950/30 px-2 py-1.5 text-[10px] text-cyan-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
           >

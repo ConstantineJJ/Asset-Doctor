@@ -10,6 +10,7 @@ import {
 } from '../performance/PerformanceProfiler';
 import { auditGltfSource, type GltfSourceAudit } from './GltfSourceAudit';
 import { captureAuthoredMaterials } from '../viewer/AuthoredMaterialState';
+import { disposeModelResources } from './ModelResources';
 
 export interface LoadedModelResult {
   fileName: string;
@@ -112,15 +113,6 @@ export class GLBLoaderService {
     const arrayBuffer = await file.arrayBuffer();
     const sourceAudit = auditGltfSource(arrayBuffer);
 
-    // A single browser File cannot resolve a normal .gltf package containing
-    // sibling .bin/images. Failing loudly is safer than loading a partial model
-    // and reporting "No textures" as if that were authored intent.
-    if (/\.gltf$/i.test(file.name) && sourceAudit.externalUris.length > 0) {
-      throw new Error(
-        `External .gltf resources are not supported by single-file import yet: ${sourceAudit.externalUris.slice(0, 5).join(', ')}. Use a self-contained GLB.`
-      );
-    }
-
     const result = await this.loadFromArrayBuffer(arrayBuffer, file.name, file.size, sourceAudit);
 
     performanceCore.resetForAsset(
@@ -141,6 +133,13 @@ export class GLBLoaderService {
     fileSizeBytes?: number,
     sourceAudit: GltfSourceAudit = auditGltfSource(buffer)
   ): Promise<LoadedModelResult> {
+    // Check source content for every entry point, including GLB and renamed
+    // files. A selected file never authorizes network or sibling-file access.
+    if (sourceAudit.externalUris.length > 0) {
+      throw new Error(
+        `External model resources are not supported by single-file import: ${sourceAudit.externalUris.slice(0, 5).join(', ')}. Use a self-contained GLB/glTF.`
+      );
+    }
     this.activeResourceErrors = [];
     this.ensureKtx2Support(sourceAudit);
     return new Promise((resolve, reject) => {
@@ -148,6 +147,12 @@ export class GLBLoaderService {
         buffer,
         '',
         (gltf) => {
+          if (this.activeResourceErrors.length > 0) {
+            sourceAudit.resourceErrors = [...this.activeResourceErrors];
+            disposeModelResources(gltf.scene);
+            reject(new Error(`Model resources failed to load: ${this.activeResourceErrors.join(', ')}`));
+            return;
+          }
           const root = gltf.scene || new THREE.Group();
           if (!root.name) root.name = fileName.replace(/\.[^/.]+$/, '');
 
@@ -179,6 +184,11 @@ export class GLBLoaderService {
       this.gltfLoader.load(
         url,
         (gltf) => {
+          if (this.activeResourceErrors.length > 0) {
+            disposeModelResources(gltf.scene);
+            reject(new Error(`Model resources failed to load: ${this.activeResourceErrors.join(', ')}`));
+            return;
+          }
           const name = fileName || url.split('/').pop() || 'model.glb';
           const root = gltf.scene || new THREE.Group();
           captureAuthoredMaterials(root);

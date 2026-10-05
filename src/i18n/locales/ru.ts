@@ -229,6 +229,7 @@ export const ru = {
       binaryExportFailed: 'GLB exporter не создал корректный бинарный payload.',
       verificationFailed: 'Экспортированный GLB открылся, но post-export проверка нашла расхождение.',
       failed: 'Не удалось экспортировать или проверить исправленный GLB.',
+      saveFailed: 'Не удалось сохранить исправленную копию',
     },
   },
   inspector: {

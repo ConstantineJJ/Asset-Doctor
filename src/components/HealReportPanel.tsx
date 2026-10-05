@@ -269,6 +269,7 @@ export function HealReportPanel({
                 {exportReport.status === 'VERIFIED' && (
                   <button
                     onClick={onDownloadExport}
+                    disabled={exportBusy || busy}
                     className="px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-medium cursor-pointer text-[10px]"
                   >
                     {t('export.download')}

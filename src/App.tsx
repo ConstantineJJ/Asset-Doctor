@@ -33,6 +33,8 @@ import { analyzeTransforms } from './analysis/TransformAnalyzer';
 import { analyzePerformance } from './analysis/PerformanceAnalyzer';
 import { analyzeNormalsAndUv } from './analysis/NormalsAndUvAnalyzer';
 import { inspectSkinInfluence } from './analysis/RigInspection';
+import { isDesktop, pickModelFiles, protectDesktopClose } from './platform/FileIO';
+import { disposeModelResources } from './loaders/ModelResources';
 import type {
   AnimationClipInfo,
   AssetSummary,
@@ -72,6 +74,12 @@ export function App() {
   const exportServiceRef = useRef<RepairedExportService | null>(null);
   const currentExportSourceRef = useRef<ExportSourceDescriptor | null>(null);
   const exportResultRef = useRef<RepairedExportResult | null>(null);
+  const loadRequestRef = useRef(0);
+  const exportRequestRef = useRef(0);
+  const exportBusyRef = useRef(false);
+  const pickingFileRef = useRef(false);
+  const unsavedRepairsRef = useRef(false);
+  const [savedExport, setSavedExport] = useState<RepairedExportResult | null>(null);
   if (!healEngineRef.current) {
     healEngineRef.current = new SurgicalHealEngine();
   }
@@ -204,6 +212,8 @@ export function App() {
     workerManagerRef.current = new WorkerManager();
 
     return () => {
+      loadRequestRef.current++;
+      exportRequestRef.current++;
       loaderServiceRef.current?.dispose();
       loaderServiceRef.current = null;
       workerManagerRef.current?.dispose();
@@ -436,7 +446,10 @@ export function App() {
       currentAssetRootRef.current = root;
       currentAnimationClipsRef.current = clips;
       currentExportSourceRef.current = exportSource ?? null;
+      unsavedRepairsRef.current = false;
       exportResultRef.current = null;
+      exportRequestRef.current++;
+      setSavedExport(null);
       setExportReport(null);
       setExportError(null);
       healEngineRef.current?.clear();
@@ -545,9 +558,21 @@ export function App() {
   // File Handlers
   const openFileNow = async (file: File) => {
     if (!loaderServiceRef.current) return;
+    const request = ++loadRequestRef.current;
+    const repairRevision = exportRequestRef.current;
     try {
       setIsLoading(true);
       const result = await loaderServiceRef.current.loadFromFile(file);
+      if (request !== loadRequestRef.current) {
+        disposeModelResources(result.root);
+        return;
+      }
+      if (unsavedRepairsRef.current && repairRevision !== exportRequestRef.current) {
+        disposeModelResources(result.root);
+        setIsLoading(false);
+        setPendingAssetSwitch({ kind: 'file', file });
+        return;
+      }
       await loadAsset(
         result.root,
         result.animations,
@@ -558,6 +583,7 @@ export function App() {
           : undefined
       );
     } catch (err) {
+      if (request !== loadRequestRef.current) return;
       alert(`Error loading 3D file: ${err instanceof Error ? err.message : String(err)}`);
       setIsLoading(false);
     }
@@ -565,6 +591,7 @@ export function App() {
 
   const selectSampleNow = async (sampleId: string) => {
     if (sampleId !== 'test-patient') return;
+    loadRequestRef.current++;
     const sample = createAssetDoctorTestPatient();
     await loadAsset(
       sample.root,
@@ -786,7 +813,9 @@ export function App() {
     setHealReport(report);
     setSavedHealReport(report);
     setHealHistorical(false);
-    setActiveRepairReports(engine.getActiveReports());
+    const activeReports = engine.getActiveReports();
+    unsavedRepairsRef.current = activeReports.length > 0;
+    setActiveRepairReports(activeReports);
     setHealStorageFailed(!saveHealReport(report));
   };
 
@@ -798,6 +827,8 @@ export function App() {
     setHealBusy(true);
     setHealError(null);
     exportResultRef.current = null;
+    exportRequestRef.current++;
+    setSavedExport(null);
     setExportReport(null);
     setExportError(null);
     try {
@@ -997,7 +1028,7 @@ export function App() {
     const source = currentExportSourceRef.current;
     const engine = healEngineRef.current;
     const service = exportServiceRef.current;
-    if (!root || !source || !engine || !service || exportBusy) {
+    if (!root || !source || !engine || !service || exportBusyRef.current) {
       setExportError(t('export.errors.unavailable'));
       return null;
     }
@@ -1009,6 +1040,8 @@ export function App() {
     }
 
     setExportBusy(true);
+    exportBusyRef.current = true;
+    const request = ++exportRequestRef.current;
     setExportError(null);
     exportResultRef.current = null;
     setExportReport(null);
@@ -1021,6 +1054,8 @@ export function App() {
         healReports: preflight.reports,
       });
 
+      if (request !== exportRequestRef.current || root !== currentAssetRootRef.current) return null;
+
       exportResultRef.current = result;
       setExportReport(result.report);
 
@@ -1030,19 +1065,42 @@ export function App() {
       }
       return result;
     } catch (error) {
+      if (request !== exportRequestRef.current) return null;
       const key = error instanceof Error ? error.message : 'export.errors.failed';
       setExportError(t(key.startsWith('export.') ? key : 'export.errors.failed'));
       return null;
     } finally {
+      exportBusyRef.current = false;
       setExportBusy(false);
     }
   };
 
-  const handleDownloadRepairedExport = () => {
-    const result = exportResultRef.current;
+  const saveRepairedExport = async (result: RepairedExportResult): Promise<boolean> => {
     const service = exportServiceRef.current;
-    if (!result || !service || result.report.status !== 'VERIFIED') return;
-    service.download(result);
+    if (!service || exportBusyRef.current || exportResultRef.current !== result) return false;
+    exportBusyRef.current = true;
+    setExportBusy(true);
+    setExportError(null);
+    try {
+      const saved = await service.download(result);
+      // A save dialog can stay open while Undo or another asset invalidates it.
+      if (!saved || exportResultRef.current !== result) return false;
+      unsavedRepairsRef.current = false;
+      setSavedExport(result);
+      return true;
+    } catch (error) {
+      setExportError(`${t('export.errors.saveFailed')}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    } finally {
+      exportBusyRef.current = false;
+      setExportBusy(false);
+    }
+  };
+
+  const handleDownloadRepairedExport = async () => {
+    const result = exportResultRef.current;
+    if (!result || result.report.status !== 'VERIFIED') return;
+    await saveRepairedExport(result);
   };
 
   const handleToolbarExport = async () => {
@@ -1051,13 +1109,13 @@ export function App() {
 
     const cached = exportResultRef.current;
     if (cached?.report.status === 'VERIFIED') {
-      service.download(cached);
+      await saveRepairedExport(cached);
       return;
     }
 
     const result = await handleBuildRepairedExport();
     if (result?.report.status === 'VERIFIED') {
-      service.download(result);
+      await saveRepairedExport(result);
     }
   };
 
@@ -1069,8 +1127,9 @@ export function App() {
     currentExportSourceRef.current
   );
   const hasUnsavedRepairs = Boolean(
-    activeRepairReports.length > 0 && exportResultRef.current?.report.status !== 'VERIFIED'
+    activeRepairReports.length > 0 && (!savedExport || savedExport !== exportResultRef.current)
   );
+  unsavedRepairsRef.current = hasUnsavedRepairs;
 
   const runAssetSwitch = async (pending: PendingAssetSwitch) => {
     if (pending.kind === 'file') await openFileNow(pending.file);
@@ -1078,15 +1137,32 @@ export function App() {
   };
 
   const requestOpenFile = (file: File) => {
-    if (hasUnsavedRepairs) {
+    if (unsavedRepairsRef.current) {
+      loadRequestRef.current++;
+      setIsLoading(false);
       setPendingAssetSwitch({ kind: 'file', file });
       return;
     }
     void openFileNow(file);
   };
 
+  const handlePickFile = async () => {
+    if (pickingFileRef.current) return;
+    pickingFileRef.current = true;
+    try {
+      const [file] = await pickModelFiles();
+      if (file) requestOpenFile(file);
+    } catch (error) {
+      alert(`${language === 'ru' ? 'Не удалось открыть файл' : 'Could not open file'}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      pickingFileRef.current = false;
+    }
+  };
+
   const requestSelectSample = (sampleId: string) => {
-    if (hasUnsavedRepairs) {
+    if (unsavedRepairsRef.current) {
+      loadRequestRef.current++;
+      setIsLoading(false);
       setPendingAssetSwitch({ kind: 'sample', sampleId });
       return;
     }
@@ -1107,7 +1183,7 @@ export function App() {
 
     const result = await handleBuildRepairedExport();
     if (!result || result.report.status !== 'VERIFIED') return;
-    service.download(result);
+    if (!(await saveRepairedExport(result))) return;
     setPendingAssetSwitch(null);
     await runAssetSwitch(pending);
   };
@@ -1123,6 +1199,19 @@ export function App() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedRepairs]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void protectDesktopClose(
+      () => unsavedRepairsRef.current,
+      language === 'ru' ? 'Есть несохранённые исправления. Закрыть окно и потерять их?' : 'There are unsaved repairs. Close the window and discard them?'
+    ).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    }).catch((error) => console.error('Could not register desktop close protection:', error));
+    return () => { disposed = true; unlisten?.(); };
+  }, [language]);
 
   // Animation Handlers
   const handleSelectClip = (idx: number) => {
@@ -1199,6 +1288,7 @@ export function App() {
     <div className="flex flex-col h-screen w-screen bg-[#131518] text-gray-100 overflow-hidden font-sans select-none">
       {/* Top Application Toolbar */}
       <TopToolbar
+        onPickFile={isDesktop() ? handlePickFile : undefined}
         onOpenFile={requestOpenFile}
         onExport={handleToolbarExport}
         canExport={canExportRepaired}
@@ -1385,7 +1475,9 @@ export function App() {
               >
                 {exportBusy
                   ? (language === 'ru' ? 'Экспорт…' : 'Exporting…')
-                  : (language === 'ru' ? 'Экспортировать и открыть' : 'Export and open')}
+                  : isDesktop()
+                    ? (language === 'ru' ? 'Экспортировать и открыть' : 'Export and open')
+                    : (language === 'ru' ? 'Скачать копию' : 'Download copy')}
               </button>
             </div>
           </div>
