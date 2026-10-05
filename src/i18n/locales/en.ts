@@ -270,6 +270,7 @@ export const en = {
       binaryExportFailed: 'GLB binary export did not produce a valid binary payload.',
       verificationFailed: 'The exported GLB reopened, but post-export verification found a mismatch.',
       failed: 'The repaired GLB could not be exported or verified.',
+      saveFailed: 'The repaired copy could not be saved',
     },
   },
   inspector: {
