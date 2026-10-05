@@ -51,6 +51,7 @@ import type {
   SceneNodeInfo,
   SkinInfluenceSummary,
   SkinningStats,
+  SurfaceType,
   TextureInfo,
   TopologyStats,
 } from './types';
@@ -129,7 +130,18 @@ export function App() {
     keyIntensity: 1.6,
     fillIntensity: 0.6,
     rimIntensity: 1.0,
+    keyColor: '#fffbf5',
+    fillColor: '#dce5ef',
+    rimColor: '#ffffff',
+    keyPosition: [5, 8, 5],
+    castShadows: true,
+    showLightBulb: true,
   });
+  const [surface, setSurface] = useState<SurfaceType>('grid');
+  const [modelRotation, setModelRotation] = useState<number>(0);
+  const [autoRotate, setAutoRotate] = useState<boolean>(false);
+  const [autoRotateSpeed, setAutoRotateSpeed] = useState<number>(1.0);
+  const [isTreeCollapsed, setIsTreeCollapsed] = useState<boolean>(false);
   const [toggles, setToggles] = useState({
     grid: true,
     axes: true,
@@ -489,6 +501,12 @@ export function App() {
           onAnimationPlaybackStateChange: (playing) => {
             setIsPlayingAnimation(playing);
           },
+          onLightingChange: (updatedConfig) => {
+            setLightingConfig((prev) => ({ ...prev, ...updatedConfig }));
+          },
+          onModelRotationChange: (deg) => {
+            setModelRotation(deg);
+          },
         });
         sceneManagerRef.current = mgr;
         loaderServiceRef.current?.configureRenderer(mgr.renderer);
@@ -567,6 +585,44 @@ export function App() {
     setLightingPreset(preset);
     sceneManagerRef.current?.setLightingPreset(preset);
   };
+
+  const handleSetSurface = (nextSurface: SurfaceType) => {
+    setSurface(nextSurface);
+    sceneManagerRef.current?.setSurface(nextSurface);
+  };
+
+  const handleSetModelRotation = (deg: number) => {
+    setModelRotation(deg);
+    sceneManagerRef.current?.setModelRotation(deg);
+  };
+
+  const handleToggleAutoRotate = () => {
+    const next = !autoRotate;
+    setAutoRotate(next);
+    sceneManagerRef.current?.setAutoRotate(next, autoRotateSpeed);
+  };
+
+  const handleSetAutoRotateSpeed = (speed: number) => {
+    setAutoRotateSpeed(speed);
+    sceneManagerRef.current?.setAutoRotate(autoRotate, speed);
+  };
+
+  const handleToggleTreeCollapse = () => {
+    setIsTreeCollapsed((prev) => !prev);
+    requestAnimationFrame(() => {
+      sceneManagerRef.current?.resize();
+    });
+  };
+
+  useEffect(() => {
+    sceneManagerRef.current?.resize();
+    const t1 = setTimeout(() => sceneManagerRef.current?.resize(), 40);
+    const t2 = setTimeout(() => sceneManagerRef.current?.resize(), 220);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [isTreeCollapsed]);
 
   const handleUpdateLighting = (config: Partial<LightingConfig>) => {
     setLightingConfig((prev) => ({ ...prev, ...config }));
@@ -1152,6 +1208,12 @@ export function App() {
         onSetRenderMode={handleSetRenderMode}
         lightingPreset={lightingPreset}
         onSetLightingPreset={handleSetLightingPreset}
+        surface={surface}
+        onSetSurface={handleSetSurface}
+        isTreeCollapsed={isTreeCollapsed}
+        onToggleTreeCollapse={handleToggleTreeCollapse}
+        autoRotate={autoRotate}
+        onToggleAutoRotate={handleToggleAutoRotate}
         onFrameAll={handleFrameAll}
         onFocusSelected={handleFocusSelected}
         onFrameRawBounds={handleFrameRawBounds}
@@ -1177,6 +1239,8 @@ export function App() {
           onIsolateNode={handleIsolateNode}
           onShowAll={handleShowAll}
           onFocusNode={handleFocusNode}
+          isCollapsed={isTreeCollapsed}
+          onTogglePanelCollapse={handleToggleTreeCollapse}
         />
 
         {/* Center: 3D Viewport with Drag & Drop */}
@@ -1188,6 +1252,18 @@ export function App() {
           renderMode={renderMode}
           triangleCount={summary?.triangleCount || 0}
           modelHeight={summary?.boundingBox.size[1] || 0}
+          surface={surface}
+          onSetSurface={handleSetSurface}
+          modelRotation={modelRotation}
+          onSetModelRotation={handleSetModelRotation}
+          autoRotate={autoRotate}
+          onToggleAutoRotate={handleToggleAutoRotate}
+          autoRotateSpeed={autoRotateSpeed}
+          onSetAutoRotateSpeed={handleSetAutoRotateSpeed}
+          isLightBulbVisible={lightingConfig.showLightBulb ?? true}
+          onToggleLightBulb={() =>
+            handleUpdateLighting({ showLightBulb: !(lightingConfig.showLightBulb ?? true) })
+          }
         />
 
         {/* Right: Technical Inspector & Diagnostic Panel */}

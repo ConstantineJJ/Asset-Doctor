@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Box,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Eye,
   EyeOff,
@@ -24,6 +25,8 @@ interface SceneTreePanelProps {
   onIsolateNode: (uuid: string) => void;
   onShowAll: () => void;
   onFocusNode: (uuid: string) => void;
+  isCollapsed?: boolean;
+  onTogglePanelCollapse?: () => void;
 }
 
 export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
@@ -34,8 +37,10 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
   onIsolateNode,
   onShowAll,
   onFocusNode,
+  isCollapsed = false,
+  onTogglePanelCollapse,
 }) => {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
 
@@ -182,8 +187,34 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
     );
   };
 
+  if (isCollapsed) {
+    return (
+      <aside className="w-10 bg-[#16181d] border-r border-[#262932] flex flex-col items-center py-2 h-full shrink-0 select-none transition-all duration-200 z-10">
+        <button
+          onClick={onTogglePanelCollapse}
+          className="p-1.5 rounded hover:bg-[#20232a] text-cyan-400 hover:text-cyan-300 transition cursor-pointer"
+          title={language === 'ru' ? 'Развернуть дерево сцены' : 'Expand scene tree'}
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <div
+          onClick={onTogglePanelCollapse}
+          className="mt-6 flex flex-col items-center gap-3 cursor-pointer group"
+          title={language === 'ru' ? 'Развернуть дерево сцены' : 'Expand scene tree'}
+        >
+          <Layers className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transition" />
+          <span
+            className="text-[10px] text-gray-400 group-hover:text-gray-200 font-medium tracking-wider uppercase [writing-mode:vertical-lr] rotate-180 select-none transition"
+          >
+            {t('scene.title')}
+          </span>
+        </div>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="w-72 bg-[#16181d] border-r border-[#262932] flex flex-col h-full shrink-0 select-none">
+    <aside className="w-72 bg-[#16181d] border-r border-[#262932] flex flex-col h-full shrink-0 select-none transition-all duration-200">
       {/* Panel Header */}
       <div className="h-10 px-3 border-b border-[#262932] flex items-center justify-between bg-[#1a1c22]">
         <div className="flex items-center space-x-2">
@@ -192,13 +223,24 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
             {t('scene.title')}
           </span>
         </div>
-        <button
-          onClick={onShowAll}
-          className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium px-2 py-0.5 rounded bg-[#20232a] hover:bg-[#292d37] transition cursor-pointer"
-          title={t('scene.showAllTitle')}
-        >
-          {t('scene.showAll')}
-        </button>
+        <div className="flex items-center space-x-1">
+          <button
+            onClick={onShowAll}
+            className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium px-2 py-0.5 rounded bg-[#20232a] hover:bg-[#292d37] transition cursor-pointer"
+            title={t('scene.showAllTitle')}
+          >
+            {t('scene.showAll')}
+          </button>
+          {onTogglePanelCollapse && (
+            <button
+              onClick={onTogglePanelCollapse}
+              className="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-[#20232a] transition cursor-pointer"
+              title={language === 'ru' ? 'Свернуть дерево сцены' : 'Collapse scene hierarchy'}
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filter Search */}

@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import type { AssetSummary, LightingPreset, RenderMode } from '../types';
+import type { AssetSummary, LightingPreset, RenderMode, SurfaceType } from '../types';
 
 export type CompareViewMode = 'grid' | 'lineup';
 export type CompareScaleMode = 'real' | 'normalize-height';
 
 export interface CompareAssetRecord {
   id: string;
-  slot: 'A' | 'B' | 'C' | 'D' | 'E';
+  slot: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
   fileName: string;
   fileSizeBytes?: number;
   /** Pristine source bytes kept so a Compare asset can be reopened in Doctor safely. */
@@ -48,6 +48,7 @@ export interface CompareSessionSnapshot {
   syncAnimations: boolean;
   renderMode: RenderMode;
   lightingPreset: LightingPreset;
+  surface?: SurfaceType;
 }
 
 export interface CompareViewportRect {

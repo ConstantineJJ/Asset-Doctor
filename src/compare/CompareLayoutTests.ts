@@ -60,9 +60,22 @@ export function runCompareLayoutTests(): CompareLayoutTestResult[] {
     return { passed, actual: JSON.stringify(cell) };
   });
 
-  test('Compare layout clamps unsupported asset counts to five', '5 cells maximum', () => {
+  test('Compare layout uses 4+4 for eight assets', 'top row=4, bottom row=4', () => {
+    const layout = computeCompareLayout(8, 1200, 800);
+    const top = layout.filter((cell) => cell.y >= 400);
+    const bottom = layout.filter((cell) => cell.y < 400);
+    const passed =
+      layout.length === 8 &&
+      top.length === 4 &&
+      bottom.length === 4 &&
+      top.every((cell) => Math.abs(cell.width - 300) < 1e-6) &&
+      bottom.every((cell) => Math.abs(cell.width - 300) < 1e-6);
+    return { passed, actual: `top=${top.length}, bottom=${bottom.length}` };
+  });
+
+  test('Compare layout clamps unsupported asset counts to eight', '8 cells maximum', () => {
     const layout = computeCompareLayout(99, 1000, 700);
-    return { passed: layout.length === 5, actual: `${layout.length} cells` };
+    return { passed: layout.length === 8, actual: `${layout.length} cells` };
   });
 
   return results;

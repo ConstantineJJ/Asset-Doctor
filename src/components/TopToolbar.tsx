@@ -7,6 +7,8 @@ import {
   Maximize2,
   Orbit,
   Palette,
+  PanelLeft,
+  RotateCw,
   Sliders,
   Sun,
   TestTube2,
@@ -15,7 +17,7 @@ import {
   Zap,
   Languages,
 } from 'lucide-react';
-import type { LightingPreset, RenderMode } from '../types';
+import type { LightingPreset, RenderMode, SurfaceType } from '../types';
 import { useI18n } from '../i18n';
 
 interface TopToolbarProps {
@@ -28,6 +30,12 @@ interface TopToolbarProps {
   onSetRenderMode: (mode: RenderMode) => void;
   lightingPreset: LightingPreset;
   onSetLightingPreset: (preset: LightingPreset) => void;
+  surface: SurfaceType;
+  onSetSurface: (surface: SurfaceType) => void;
+  isTreeCollapsed: boolean;
+  onToggleTreeCollapse: () => void;
+  autoRotate: boolean;
+  onToggleAutoRotate: () => void;
   onFrameAll: () => void;
   onFocusSelected: () => void;
   onFrameRawBounds?: () => void;
@@ -58,6 +66,12 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   onSetRenderMode,
   lightingPreset,
   onSetLightingPreset,
+  surface,
+  onSetSurface,
+  isTreeCollapsed,
+  onToggleTreeCollapse,
+  autoRotate,
+  onToggleAutoRotate,
   onFrameAll,
   onFocusSelected,
   onFrameRawBounds,
@@ -110,6 +124,22 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
       />
 
       <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          onClick={onToggleTreeCollapse}
+          className={`p-1.5 rounded border transition cursor-pointer ${
+            !isTreeCollapsed
+              ? 'bg-cyan-950/40 border-cyan-700/60 text-cyan-300'
+              : 'bg-[#252830] border-[#373b46] text-gray-400 hover:text-gray-200'
+          }`}
+          title={
+            isTreeCollapsed
+              ? (language === 'ru' ? 'Развернуть дерево сцены' : 'Expand Scene Tree')
+              : (language === 'ru' ? 'Свернуть дерево сцены (освободить место)' : 'Collapse Scene Tree')
+          }
+        >
+          <PanelLeft className="w-4 h-4" />
+        </button>
+
         <div className="flex items-center gap-2 pr-2 border-r border-[#2d313a]">
           <img
             src="/asset-doctor-icon.png"
@@ -231,6 +261,26 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           </select>
         </div>
 
+        {/* Surface Selection */}
+        <div className="hidden lg:flex items-center gap-1 bg-[#1e2127] px-1.5 py-1 rounded border border-[#2d313a]">
+          <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <select
+            id="select-surface"
+            value={surface}
+            onChange={(e) => onSetSurface(e.target.value as SurfaceType)}
+            className="bg-transparent text-gray-200 text-[11px] focus:outline-none cursor-pointer font-medium max-w-36"
+            title={language === 'ru' ? 'Выбрать поверхность пола' : 'Choose ground surface'}
+          >
+            <option value="grid" className="bg-[#1e2127]">{language === 'ru' ? 'Сетка (Студия)' : 'Studio Grid'}</option>
+            <option value="grass" className="bg-[#1e2127]">{language === 'ru' ? 'Газон (Трава)' : 'Lawn / Grass'}</option>
+            <option value="road" className="bg-[#1e2127]">{language === 'ru' ? 'Дорога / тротуар' : 'Road & Sidewalk'}</option>
+            <option value="sand" className="bg-[#1e2127]">{language === 'ru' ? 'Песок' : 'Desert Sand'}</option>
+            <option value="tile" className="bg-[#1e2127]">{language === 'ru' ? 'Керамогранит' : 'Porcelain Tile'}</option>
+            <option value="wood" className="bg-[#1e2127]">{language === 'ru' ? 'Деревянный пол' : 'Wooden Floor'}</option>
+            <option value="none" className="bg-[#1e2127]">{language === 'ru' ? 'Без поверхности' : 'No Surface'}</option>
+          </select>
+        </div>
+
         <div className="hidden xl:flex items-center gap-1 bg-[#1e2127] p-0.5 rounded border border-[#2d313a]">
           <button onClick={onFrameAll} className="px-1.5 py-1 rounded hover:bg-[#282c35] text-gray-300 hover:text-white transition" title="Frame Model (Fit to view)">
             <Maximize2 className="w-3.5 h-3.5" />
@@ -299,6 +349,13 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             title="Toggle Skeletal Armature"
           >
             <Zap className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={onToggleAutoRotate}
+            className={`px-1.5 py-1 rounded transition ${autoRotate ? 'bg-cyan-600/30 text-cyan-400 font-bold' : 'text-gray-400 hover:text-gray-200'}`}
+            title={language === 'ru' ? 'Вращение модели вокруг своей оси' : 'Turntable auto-rotate model'}
+          >
+            <RotateCw className={`w-3.5 h-3.5 ${autoRotate ? 'animate-spin' : ''}`} />
           </button>
         </div>
 

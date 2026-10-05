@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { BoundsCalculator } from './BoundsCalculator';
 import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
+import { SurfaceManager } from './SurfaceManager';
 import { computeCompareLayout } from '../compare/CompareLayout';
-import type { LightingPreset, RenderMode } from '../types';
+import type { LightingPreset, RenderMode, SurfaceType } from '../types';
 import type {
   CompareAssetRecord,
   CompareScaleMode,
@@ -18,6 +18,7 @@ interface CompareSceneManagerCallbacks {
   onSoloRequest?: (assetId: string | null) => void;
   onAnimationProgress?: (normalized: number) => void;
   onManualScaleChange?: (assetId: string, scale: number) => void;
+  onModelRotationChange?: (deg: number) => void;
 }
 
 interface SlotRuntime {
@@ -31,6 +32,7 @@ interface SlotRuntime {
   radius: number;
   lightingManager: LightingManager;
   renderModeManager: RenderModeManager;
+  surfaceManager: SurfaceManager;
 }
 
 interface LineupRootRuntime {
@@ -52,6 +54,7 @@ interface LineupRuntime {
   roots: LineupRootRuntime[];
   lightingManager: LightingManager;
   renderModeManager: RenderModeManager;
+  surfaceManager: SurfaceManager;
   /** Current analytically maintained lineup bounds; avoids expandByObject on UI input. */
   bounds: THREE.Box3;
 }
@@ -92,6 +95,13 @@ export class CompareSceneManager {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private rightMouseDown = false;
+  private currentSurface: SurfaceType = 'grid';
+  private modelRotationY: number = 0;
+  private isAutoRotating: boolean = false;
+  private autoRotateSpeed: number = 1.0;
+  private isDraggingLight: boolean = false;
+  private lightDragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -2);
+  private resizeObserver: ResizeObserver | null = null;
 
   private readonly onPointerDownBound: (event: PointerEvent) => void;
   private readonly onPointerUpBound: (event: PointerEvent) => void;
@@ -139,10 +149,98 @@ export class CompareSceneManager {
     // that same event as camera dolly/zoom.
     this.renderer.domElement.addEventListener('wheel', this.onWheelBound, { passive: false, capture: true });
     this.renderer.domElement.addEventListener('contextmenu', this.onContextMenuBound);
+
+    // Hover detection over light bulb gizmo in Lineup
+    this.renderer.domElement.addEventListener('pointermove', (e) => {
+      if (this.isDraggingLight) return;
+      if (this.viewMode === 'lineup' && this.lineup && this.lineup.lightingManager.getLightBulbVisible()) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.pointer.x = ((e.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1;
+        this.pointer.y = -((e.clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1;
+        this.raycaster.setFromCamera(this.pointer, this.lineup.camera);
+        const bulb = this.lineup.lightingManager.getBulbMesh();
+        const hits = this.raycaster.intersectObject(bulb, false);
+        const isHovered = hits.length > 0;
+        this.lineup.lightingManager.setBulbHovered(isHovered);
+        if (isHovered) {
+          this.renderer.domElement.style.cursor = 'grab';
+        } else if (this.renderer.domElement.style.cursor === 'grab') {
+          this.renderer.domElement.style.cursor = '';
+        }
+      }
+    });
+
     window.addEventListener('pointerup', this.onPointerUpBound);
     window.addEventListener('blur', this.onWindowBlurBound);
     window.addEventListener('resize', this.onResizeBound);
+
+    // Watch container element size changes directly (tree collapse/expand, panel resize)
+    let resizeTimer: number | null = null;
+    this.resizeObserver = new ResizeObserver(() => {
+      if (resizeTimer !== null) cancelAnimationFrame(resizeTimer);
+      resizeTimer = requestAnimationFrame(() => {
+        resizeTimer = null;
+        this.resize();
+      });
+    });
+    this.resizeObserver.observe(this.container);
+
     this.startRenderLoop();
+  }
+
+  public setSurface(surface: SurfaceType) {
+    this.currentSurface = surface;
+    for (const slot of this.slots) {
+      slot.surfaceManager.setSurface(surface);
+      const grid = slot.scene.getObjectByName('__asset_doctor_compare_grid');
+      if (grid) grid.visible = (surface === 'grid');
+    }
+    if (this.lineup) {
+      this.lineup.surfaceManager.setSurface(surface);
+      const grid = this.lineup.scene.getObjectByName('__asset_doctor_compare_grid');
+      if (grid) grid.visible = (surface === 'grid');
+    }
+  }
+
+  public getSurface(): SurfaceType {
+    return this.currentSurface;
+  }
+
+  public setModelRotation(deg: number) {
+    this.modelRotationY = deg;
+    const rad = THREE.MathUtils.degToRad(deg);
+    if (this.lineup) {
+      for (const entry of this.lineup.roots) {
+        entry.root.rotation.y = rad;
+      }
+    }
+    for (const slot of this.slots) {
+      slot.asset.root.rotation.y = rad;
+    }
+  }
+
+  public getModelRotation(): number {
+    return this.modelRotationY;
+  }
+
+  public setAutoRotate(enabled: boolean, speed: number = 1.0) {
+    this.isAutoRotating = enabled;
+    this.autoRotateSpeed = speed;
+  }
+
+  public getAutoRotate(): boolean {
+    return this.isAutoRotating;
+  }
+
+  public setLightBulbVisible(visible: boolean) {
+    this.lineup?.lightingManager.setLightBulbVisible(visible);
+    for (const slot of this.slots) {
+      slot.lightingManager.setLightBulbVisible(visible);
+    }
+  }
+
+  public getLightBulbVisible(): boolean {
+    return this.lineup?.lightingManager.getLightBulbVisible() ?? true;
   }
 
   public setActive(active: boolean) {
@@ -172,13 +270,36 @@ export class CompareSceneManager {
       if (!nextIds.has(id)) this.manualScales.delete(id);
     }
 
+    // Optimization for fast reordering in Lineup and Grid:
+    // If the asset set is unchanged and only the sequence changed, reorder existing runtimes in-place.
+    const currentIds = this.assets.map((a) => a.id);
+    const isSameLength = assets.length === currentIds.length;
+    const isSameIds = isSameLength && assets.every((a) => this.assets.some((c) => c.id === a.id));
+    if (isSameIds) {
+      const orderMap = new Map(assets.map((a, i) => [a.id, i]));
+      this.assets = assets.slice(0, 8);
+      if (this.viewMode === 'lineup' && this.lineup && this.lineup.roots.length === assets.length) {
+        this.lineup.roots.sort((a, b) => (orderMap.get(a.asset.id) ?? 0) - (orderMap.get(b.asset.id) ?? 0));
+        this.updateLineupLayout(false, true);
+        this.updateControlEnablement();
+        return;
+      }
+      if (this.viewMode === 'grid' && this.slots.length === assets.length) {
+        this.slots.sort((a, b) => (orderMap.get(a.asset.id) ?? 0) - (orderMap.get(b.asset.id) ?? 0));
+        this.updateControlEnablement();
+        return;
+      }
+    }
+
     this.clearSlotRuntimes();
     this.clearLineup();
-    this.assets = assets.slice(0, 5);
+    this.assets = assets.slice(0, 8);
 
-    for (const asset of this.assets) {
-      this.prepareAssetRoot(asset.root);
-      this.slots.push(this.createSlotRuntime(asset));
+    if (this.viewMode === 'grid') {
+      for (const asset of this.assets) {
+        this.prepareAssetRoot(asset.root);
+        this.slots.push(this.createSlotRuntime(asset));
+      }
     }
 
     if (!this.activeAssetId || !nextIds.has(this.activeAssetId)) {
@@ -200,16 +321,20 @@ export class CompareSceneManager {
   }
 
   public setViewMode(mode: CompareViewMode) {
+    if (this.viewMode === mode) return;
     this.viewMode = mode;
     this.rightMouseDown = false;
     if (mode === 'lineup') {
-      // Lineup is presentation-only. Rebuild from authored source each time we
-      // enter it instead of reusing stale clones created while Grid was active.
+      this.clearSlotRuntimes();
       this.rebuildLineup(true);
     } else {
-      // Release presentation clones/mixers while Grid is active. Session state
-      // such as manual scales and selected assets is stored outside the clones.
       this.clearLineup();
+      this.clearSlotRuntimes();
+      for (const asset of this.assets) {
+        this.prepareAssetRoot(asset.root);
+        this.slots.push(this.createSlotRuntime(asset));
+      }
+      this.resetCameras();
     }
     this.updateControlEnablement();
   }
@@ -334,6 +459,10 @@ export class CompareSceneManager {
   public dispose() {
     if (this.animationFrameId !== null) cancelAnimationFrame(this.animationFrameId);
     this.animationFrameId = null;
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    }
     window.removeEventListener('resize', this.onResizeBound);
     window.removeEventListener('pointerup', this.onPointerUpBound);
     window.removeEventListener('blur', this.onWindowBlurBound);
@@ -382,9 +511,9 @@ export class CompareSceneManager {
     root.visible = true;
     root.updateMatrixWorld(true);
     if (root.userData.__assetDoctorCompareGrounded) return;
-    const bounds = BoundsCalculator.computeAccurateWorldBounds(root);
-    if (bounds.isValid && Number.isFinite(bounds.box.min.y)) {
-      root.position.y -= bounds.box.min.y;
+    const box = new THREE.Box3().setFromObject(root);
+    if (!box.isEmpty() && Number.isFinite(box.min.y)) {
+      root.position.y -= box.min.y;
       root.updateMatrixWorld(true);
     }
     root.userData.__assetDoctorCompareGrounded = true;
@@ -403,6 +532,8 @@ export class CompareSceneManager {
 
     const lightingManager = new LightingManager(scene);
     lightingManager.applyPreset(this.lightingPreset);
+    const surfaceManager = new SurfaceManager(scene);
+    surfaceManager.setSurface(this.currentSurface);
     const renderModeManager = new RenderModeManager(scene);
     asset.root.traverse((object) => {
       if ((object as THREE.Mesh).isMesh) renderModeManager.registerMesh(object as THREE.Mesh);
@@ -428,6 +559,7 @@ export class CompareSceneManager {
       radius,
       lightingManager,
       renderModeManager,
+      surfaceManager,
     };
     this.frameSlot(runtime);
     controls.addEventListener('change', () => this.handleCameraChanged(runtime));
@@ -453,6 +585,7 @@ export class CompareSceneManager {
     const grid = new THREE.GridHelper(gridSize, divisions, 0x3b82f6, 0x272b32);
     grid.position.y = 0;
     grid.name = '__asset_doctor_compare_grid';
+    grid.visible = (this.currentSurface === 'grid');
     scene.add(grid);
   }
 
@@ -491,15 +624,6 @@ export class CompareSceneManager {
     }
   }
 
-  private cloneAuthoredAsset(asset: CompareAssetRecord) {
-    const slot = this.slots.find((entry) => entry.asset.id === asset.id);
-    if (!slot) return cloneSkeleton(asset.root) as THREE.Group;
-    return slot.renderModeManager.withOriginalMaterials(
-      asset.root,
-      () => cloneSkeleton(asset.root) as THREE.Group
-    );
-  }
-
   private rebuildLineup(reframe: boolean) {
     const progress = this.getReferenceNormalizedTime();
     this.clearLineup();
@@ -508,15 +632,21 @@ export class CompareSceneManager {
     const scene = this.createScene();
     const roots: LineupRootRuntime[] = [];
 
-    // Cloning a production GLB (especially a skinned/textured one) is expensive.
-    // Do it once when Lineup is created, never for interactive scale changes.
     for (const asset of this.assets) {
-      const root = this.cloneAuthoredAsset(asset);
+      const root = asset.root;
+      root.visible = true;
+      root.position.set(0, 0, 0);
+      root.scale.set(1, 1, 1);
+      root.rotation.set(0, 0, 0);
       root.updateMatrixWorld(true);
+
       const sourceBounds = new THREE.Box3().setFromObject(root);
+      if (sourceBounds.isEmpty() || !Number.isFinite(sourceBounds.min.x)) {
+        sourceBounds.set(new THREE.Vector3(-0.5, 0, -0.5), new THREE.Vector3(0.5, 1, 0.5));
+      }
       const sourceSize = sourceBounds.getSize(new THREE.Vector3());
-      const basePosition = root.position.clone();
-      const baseScale = root.scale.clone();
+      const basePosition = new THREE.Vector3(0, 0, 0);
+      const baseScale = new THREE.Vector3(1, 1, 1);
       scene.add(root);
 
       const mixer = asset.animations.length > 0 ? new THREE.AnimationMixer(root) : null;
@@ -539,6 +669,8 @@ export class CompareSceneManager {
 
     const lightingManager = new LightingManager(scene);
     lightingManager.applyPreset(this.lightingPreset);
+    const surfaceManager = new SurfaceManager(scene);
+    surfaceManager.setSurface(this.currentSurface);
     const renderModeManager = new RenderModeManager(scene);
     for (const entry of roots) {
       entry.root.traverse((object) => {
@@ -560,6 +692,7 @@ export class CompareSceneManager {
       roots,
       lightingManager,
       renderModeManager,
+      surfaceManager,
       bounds: new THREE.Box3(),
     };
     this.updateLineupLayout(reframe, true);
@@ -569,49 +702,82 @@ export class CompareSceneManager {
   }
 
   private updateLineupLayout(reframe: boolean, refreshGrid: boolean) {
-    if (!this.lineup || this.lineup.roots.length === 0) return;
+    const lineup = this.lineup;
+    if (!lineup || lineup.roots.length === 0) return;
 
     const maxHeight = Math.max(
-      0,
-      ...this.lineup.roots.map((entry) => entry.sourceSize.y)
+      0.1,
+      ...lineup.roots.map((entry) => (Number.isFinite(entry.sourceSize.y) && entry.sourceSize.y > 0 ? entry.sourceSize.y : 1))
     );
     const targetHeight = Math.max(maxHeight, 1);
-    const gap = Math.max(targetHeight * 0.18, 0.25);
+    const gap = Math.max(targetHeight * 0.25, 0.4);
     const combined = new THREE.Box3();
-    let cursorX = 0;
 
-    for (const entry of this.lineup.roots) {
+    // 1. Calculate individual scaled widths and total lineup width
+    const factors = lineup.roots.map((entry) => {
+      const srcY = Number.isFinite(entry.sourceSize.y) && entry.sourceSize.y > 1e-4 ? entry.sourceSize.y : 1;
       const normalizeScale =
-        this.scaleMode === 'normalize-height' && entry.sourceSize.y > 1e-6
-          ? targetHeight / entry.sourceSize.y
+        this.scaleMode === 'normalize-height'
+          ? targetHeight / srcY
           : 1;
       const manualScale = this.manualScales.get(entry.asset.id) ?? 1;
-      const factor = normalizeScale * manualScale;
+      return (Number.isFinite(normalizeScale) ? normalizeScale : 1) * (Number.isFinite(manualScale) ? manualScale : 1);
+    });
 
-      // sourceBounds were measured with baseScale already applied. Uniformly
-      // scaling their offsets around the root origin lets us update bounds and
-      // placement without traversing thousands of meshes/vertices again.
-      const minOffset = entry.sourceBounds.min.clone().sub(entry.basePosition).multiplyScalar(factor);
-      const maxOffset = entry.sourceBounds.max.clone().sub(entry.basePosition).multiplyScalar(factor);
+    let totalWidth = 0;
+    lineup.roots.forEach((entry, i) => {
+      const srcX = Number.isFinite(entry.sourceSize.x) && entry.sourceSize.x > 0 ? entry.sourceSize.x : 1;
+      totalWidth += srcX * factors[i];
+      if (i < lineup.roots.length - 1) totalWidth += gap;
+    });
+    if (!Number.isFinite(totalWidth) || totalWidth <= 0) totalWidth = 1;
 
+    // 2. Start at -totalWidth / 2 so the lineup is centered at origin X = 0!
+    let cursorX = -totalWidth / 2;
+
+    for (let i = 0; i < lineup.roots.length; i++) {
+      const entry = lineup.roots[i];
+      const factor = factors[i];
+
+      // Reset to origin first to calculate accurate transformed bounding box
       entry.root.scale.copy(entry.baseScale).multiplyScalar(factor);
-      entry.root.position.copy(entry.basePosition);
-
-      const currentMinX = entry.root.position.x + minOffset.x;
-      entry.root.position.x += cursorX - currentMinX;
-      const currentMinY = entry.root.position.y + minOffset.y;
-      entry.root.position.y -= currentMinY;
+      entry.root.position.set(0, 0, 0);
+      entry.root.rotation.y = THREE.MathUtils.degToRad(this.modelRotationY);
       entry.root.updateMatrixWorld(true);
 
-      const min = entry.root.position.clone().add(minOffset);
-      const max = entry.root.position.clone().add(maxOffset);
-      combined.expandByPoint(min);
-      combined.expandByPoint(max);
+      const box = new THREE.Box3().setFromObject(entry.root);
+      if (box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.x)) {
+        box.set(new THREE.Vector3(-0.5, 0, -0.5), new THREE.Vector3(0.5, 1, 0.5));
+      }
 
-      cursorX += entry.sourceSize.x * factor + gap;
+      const spanX = Math.max(box.max.x - box.min.x, 0.1);
+      const centerZ = Number.isFinite(box.min.z) && Number.isFinite(box.max.z) ? (box.min.z + box.max.z) / 2 : 0;
+      const minY = Number.isFinite(box.min.y) ? box.min.y : 0;
+      const minX = Number.isFinite(box.min.x) ? box.min.x : 0;
+
+      // 1. Center in depth along Z=0 axis so models form a clean straight lineup
+      entry.root.position.z = -centerZ;
+
+      // 2. Sit precisely level on the ground at Y = 0 (no floating, no sunken models)
+      entry.root.position.y = -minY;
+
+      // 3. Align along X starting at cursorX
+      entry.root.position.x = cursorX - minX;
+      entry.root.updateMatrixWorld(true);
+
+      // Update final combined bounds
+      const finalBox = new THREE.Box3().setFromObject(entry.root);
+      if (!finalBox.isEmpty() && Number.isFinite(finalBox.min.x)) {
+        combined.union(finalBox);
+      }
+
+      cursorX += spanX + gap;
     }
 
-    this.lineup.bounds.copy(combined);
+    lineup.bounds.copy(combined);
+    lineup.surfaceManager.setGroundHeight(0);
+    lineup.surfaceManager.setSurface(this.currentSurface);
+
     if (refreshGrid) this.refreshLineupGrid();
     if (reframe) this.frameLineup();
   }
@@ -638,9 +804,15 @@ export class CompareSceneManager {
     const bounds = this.lineup.bounds;
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
-    const radius = Math.max(size.length() * 0.5, 0.1);
-    const distance = radius / Math.tan(THREE.MathUtils.degToRad(this.lineup.camera.fov * 0.5)) * 1.2;
-    this.lineup.camera.position.copy(center).add(new THREE.Vector3(0.25, 0.18, 1).normalize().multiplyScalar(distance));
+    if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) {
+      center.set(0, 1, 0);
+    }
+    const len = size.length();
+    const radius = Number.isFinite(len) && len > 0.01 ? Math.max(len * 0.5, 0.1) : 1;
+    const fovRad = THREE.MathUtils.degToRad(this.lineup.camera.fov * 0.5);
+    const distance = Math.max((radius / Math.tan(fovRad)) * 1.25, 0.5);
+
+    this.lineup.camera.position.copy(center).add(new THREE.Vector3(0.2, 0.15, 1).normalize().multiplyScalar(distance));
     this.lineup.camera.near = Math.max(distance / 2000, 0.001);
     this.lineup.camera.far = Math.max(distance * 100, 100);
     this.lineup.camera.updateProjectionMatrix();
@@ -729,6 +901,49 @@ export class CompareSceneManager {
   private handlePointerDown(event: PointerEvent) {
     if (this.viewMode === 'lineup') {
       if (event.button === 2) this.rightMouseDown = true;
+
+      // Check draggable light bulb in Lineup
+      if (event.button === 0 && this.lineup && this.lineup.lightingManager.getLightBulbVisible()) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.pointer.x = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1;
+        this.pointer.y = -((event.clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1;
+        this.raycaster.setFromCamera(this.pointer, this.lineup.camera);
+        const bulb = this.lineup.lightingManager.getBulbMesh();
+        const bulbHits = this.raycaster.intersectObject(bulb, false);
+        if (bulbHits.length > 0) {
+          this.isDraggingLight = true;
+          this.lineup.controls.enabled = false;
+          this.renderer.domElement.style.cursor = 'grabbing';
+
+          const bulbPos = this.lineup.lightingManager.getKeyLightPosition();
+          this.lightDragPlane.constant = -bulbPos[1];
+
+          const onLightMove = (moveEvt: PointerEvent) => {
+            const mRect = this.renderer.domElement.getBoundingClientRect();
+            const mvX = ((moveEvt.clientX - mRect.left) / mRect.width) * 2 - 1;
+            const mvY = -((moveEvt.clientY - mRect.top) / mRect.height) * 2 + 1;
+            this.raycaster.setFromCamera(new THREE.Vector2(mvX, mvY), this.lineup!.camera);
+            const hitPoint = new THREE.Vector3();
+            if (this.raycaster.ray.intersectPlane(this.lightDragPlane, hitPoint)) {
+              this.lineup!.lightingManager.setKeyLightPosition(hitPoint.x, bulbPos[1], hitPoint.z);
+            }
+          };
+
+          const onLightUp = () => {
+            this.isDraggingLight = false;
+            if (this.lineup) this.lineup.controls.enabled = true;
+            this.renderer.domElement.style.cursor = '';
+            this.lineup?.lightingManager.setBulbHovered(false);
+            window.removeEventListener('pointermove', onLightMove);
+            window.removeEventListener('pointerup', onLightUp);
+          };
+
+          window.addEventListener('pointermove', onLightMove);
+          window.addEventListener('pointerup', onLightUp);
+          return;
+        }
+      }
+
       const asset = this.hitLineupAsset(event);
       if (asset) this.setActiveAssetId(asset.id);
       return;
@@ -805,10 +1020,14 @@ export class CompareSceneManager {
     });
   }
 
-  private resize() {
+  public resize() {
+    if (!this.container) return;
     const width = this.container.clientWidth || 1;
     const height = this.container.clientHeight || 1;
-    this.renderer.setSize(width, height, false);
+    const size = this.renderer.getSize(new THREE.Vector2());
+    if (Math.abs(size.x - width) > 1 || Math.abs(size.y - height) > 1) {
+      this.renderer.setSize(width, height, false);
+    }
   }
 
   private startRenderLoop() {
@@ -825,6 +1044,22 @@ export class CompareSceneManager {
       }
 
       this.advanceAnimations(delta);
+
+      // Handle Turntable model auto-rotation around its axis in Compare mode
+      if (this.isAutoRotating) {
+        this.modelRotationY = (this.modelRotationY + this.autoRotateSpeed * 0.75) % 360;
+        const rad = THREE.MathUtils.degToRad(this.modelRotationY);
+        if (this.lineup) {
+          for (const entry of this.lineup.roots) {
+            entry.root.rotation.y = rad;
+          }
+        }
+        for (const slot of this.slots) {
+          slot.asset.root.rotation.y = rad;
+        }
+        this.callbacks.onModelRotationChange?.(Math.round(this.modelRotationY));
+      }
+
       for (const slot of this.slots) slot.controls.update();
       this.lineup?.controls.update();
 
@@ -868,6 +1103,7 @@ export class CompareSceneManager {
       slot.renderModeManager.resetAll(slot.asset.root);
       slot.renderModeManager.dispose();
       slot.lightingManager.dispose();
+      slot.surfaceManager.dispose();
       slot.scene.remove(slot.asset.root);
       this.disposeSceneHelpers(slot.scene);
     }
@@ -883,10 +1119,14 @@ export class CompareSceneManager {
       if (entry.mixer) entry.mixer.uncacheRoot(entry.root);
       lineup.renderModeManager.resetAll(entry.root);
       lineup.scene.remove(entry.root);
-      entry.root.clear();
+      entry.root.position.set(0, 0, 0);
+      entry.root.scale.set(1, 1, 1);
+      entry.root.rotation.set(0, 0, 0);
+      entry.root.updateMatrixWorld(true);
     }
     lineup.renderModeManager.dispose();
     lineup.lightingManager.dispose();
+    lineup.surfaceManager.dispose();
     this.disposeSceneHelpers(lineup.scene);
     this.lineup = null;
   }

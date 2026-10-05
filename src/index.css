@@ -14,3 +14,7 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #3d4350;
 }
+
+canvas {
+  display: block;
+}

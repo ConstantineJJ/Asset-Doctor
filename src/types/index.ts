@@ -504,6 +504,19 @@ export type LightingPreset =
   | 'rim-light'
   | 'dark-studio';
 
+export type SurfaceType =
+  | 'none'
+  | 'grid'
+  | 'grass'
+  | 'road'
+  | 'sand'
+  | 'tile'
+  | 'wood'
+  | 'cobblestone'
+  | 'countryside'
+  | 'factory'
+  | 'moon';
+
 export interface LightingConfig {
   preset: LightingPreset;
   exposure: number;
@@ -512,4 +525,10 @@ export interface LightingConfig {
   keyIntensity: number;
   fillIntensity: number;
   rimIntensity: number;
+  keyColor?: string;
+  fillColor?: string;
+  rimColor?: string;
+  keyPosition?: [number, number, number];
+  castShadows?: boolean;
+  showLightBulb?: boolean;
 }

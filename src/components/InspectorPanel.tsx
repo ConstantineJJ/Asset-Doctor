@@ -1455,16 +1455,41 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </div>
           )}
 
-          {/* Lighting Fine Tuning */}
-          <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2.5">
-            <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
-              Lighting Studio Controls
-            </h4>
+          {/* Lighting Fine Tuning & Interactive Studio Controls */}
+          <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
+                {language === 'ru' ? 'Студийное освещение' : 'Studio Lighting Controls'}
+              </h4>
+              <button
+                onClick={() => onUpdateLighting({ showLightBulb: !(lightingConfig.showLightBulb ?? true) })}
+                className={`px-2 py-0.5 rounded text-[10px] font-medium border transition cursor-pointer flex items-center gap-1 ${
+                  (lightingConfig.showLightBulb ?? true)
+                    ? 'bg-amber-950/40 border-amber-600/70 text-amber-300'
+                    : 'bg-[#15171d] border-[#343944] text-gray-400'
+                }`}
+                title={
+                  language === 'ru'
+                    ? 'Показать/скрыть 3D лампочку во вьюпорте (можно перетаскивать мышкой)'
+                    : 'Toggle 3D light bulb gizmo in viewport (draggable with mouse)'
+                }
+              >
+                <span>💡</span>
+                <span>{(lightingConfig.showLightBulb ?? true) ? (language === 'ru' ? 'Лампочка: ВКЛ' : 'Bulb: ON') : (language === 'ru' ? 'Лампочка: ВЫКЛ' : 'Bulb: OFF')}</span>
+              </button>
+            </div>
 
+            <div className="text-[10px] text-gray-400 leading-tight bg-[#15171d] p-1.5 rounded border border-[#262932]">
+              {language === 'ru'
+                ? '💡 Лампочку можно перетаскивать мышкой прямо во вьюпорте для живого изменения направления света!'
+                : '💡 You can drag the glowing light bulb directly with the mouse inside the 3D viewport!'}
+            </div>
+
+            {/* Exposure */}
             <div className="space-y-1">
               <div className="flex justify-between text-[10px]">
-                <span className="text-gray-400">Exposure:</span>
-                <span className="font-mono">{lightingConfig.exposure.toFixed(2)}</span>
+                <span className="text-gray-400">{language === 'ru' ? 'Экспозиция (Exposure):' : 'Exposure:'}</span>
+                <span className="font-mono text-cyan-300">{lightingConfig.exposure.toFixed(2)}</span>
               </div>
               <input
                 type="range"
@@ -1477,31 +1502,144 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               />
             </div>
 
-            <div className="space-y-1">
-              <div className="flex justify-between text-[10px]">
-                <span className="text-gray-400">Key Light:</span>
-                <span className="font-mono">{lightingConfig.keyIntensity.toFixed(2)}</span>
+            {/* Key Light Section */}
+            <div className="border-t border-[#2a2d36] pt-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-semibold text-gray-300">
+                  {language === 'ru' ? 'Основной свет (Key Light)' : 'Key Light (Main)'}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[9px] text-gray-400 flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={lightingConfig.castShadows ?? true}
+                      onChange={(e) => onUpdateLighting({ castShadows: e.target.checked })}
+                      className="accent-cyan-400 cursor-pointer w-3 h-3"
+                    />
+                    <span>{language === 'ru' ? 'Тени' : 'Shadows'}</span>
+                  </label>
+                  <input
+                    type="color"
+                    value={lightingConfig.keyColor || '#fffbf5'}
+                    onChange={(e) => onUpdateLighting({ keyColor: e.target.value })}
+                    className="w-5 h-5 rounded border border-[#3e4350] cursor-pointer bg-transparent"
+                    title={language === 'ru' ? 'Цвет основного света' : 'Key light color'}
+                  />
+                </div>
               </div>
-              <input
-                type="range"
-                min="0.0"
-                max="3.5"
-                step="0.1"
-                value={lightingConfig.keyIntensity}
-                onChange={(e) => onUpdateLighting({ keyIntensity: Number(e.target.value) })}
-                className="w-full h-1 accent-blue-400 cursor-pointer"
-              />
+
+              {/* Color Presets */}
+              <div className="flex items-center gap-1">
+                {[
+                  { name: 'Warm 2700K', color: '#ffdfad' },
+                  { name: 'Daylight 6500K', color: '#ffffff' },
+                  { name: 'Golden Hour', color: '#ff9d42' },
+                  { name: 'Cool Sky', color: '#b8dcff' },
+                  { name: 'Cyber Neon', color: '#00e5ff' },
+                ].map((preset) => (
+                  <button
+                    key={preset.name}
+                    onClick={() => onUpdateLighting({ keyColor: preset.color })}
+                    className="w-4 h-4 rounded-full border border-[#3e4350] hover:scale-110 transition shrink-0"
+                    style={{ backgroundColor: preset.color }}
+                    title={preset.name}
+                  />
+                ))}
+              </div>
+
+              {/* Intensity Slider */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-gray-400">{language === 'ru' ? 'Интенсивность:' : 'Intensity:'}</span>
+                  <span className="font-mono">{lightingConfig.keyIntensity.toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.0"
+                  max="4.0"
+                  step="0.05"
+                  value={lightingConfig.keyIntensity}
+                  onChange={(e) => onUpdateLighting({ keyIntensity: Number(e.target.value) })}
+                  className="w-full h-1 accent-amber-400 cursor-pointer"
+                />
+              </div>
+
+              {/* Key Light Position X, Y, Z */}
+              <div className="space-y-1.5 bg-[#15171d] p-1.5 rounded border border-[#262932]">
+                <div className="flex justify-between text-[9px] text-gray-400">
+                  <span>{language === 'ru' ? 'Координаты лампочки:' : 'Light Position:'}</span>
+                  <span className="font-mono text-cyan-400">
+                    X: {lightingConfig.keyPosition?.[0]?.toFixed(1) ?? '5.0'} | Y: {lightingConfig.keyPosition?.[1]?.toFixed(1) ?? '8.0'} | Z: {lightingConfig.keyPosition?.[2]?.toFixed(1) ?? '5.0'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  <div>
+                    <span className="text-[8px] text-gray-500 block">X</span>
+                    <input
+                      type="range"
+                      min="-20"
+                      max="20"
+                      step="0.5"
+                      value={lightingConfig.keyPosition?.[0] ?? 5}
+                      onChange={(e) => {
+                        const cur = lightingConfig.keyPosition ?? [5, 8, 5];
+                        onUpdateLighting({ keyPosition: [Number(e.target.value), cur[1], cur[2]] });
+                      }}
+                      className="w-full h-1 accent-red-400 cursor-pointer"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[8px] text-gray-500 block">Y (Высота)</span>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="25"
+                      step="0.5"
+                      value={lightingConfig.keyPosition?.[1] ?? 8}
+                      onChange={(e) => {
+                        const cur = lightingConfig.keyPosition ?? [5, 8, 5];
+                        onUpdateLighting({ keyPosition: [cur[0], Number(e.target.value), cur[2]] });
+                      }}
+                      className="w-full h-1 accent-green-400 cursor-pointer"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[8px] text-gray-500 block">Z</span>
+                    <input
+                      type="range"
+                      min="-20"
+                      max="20"
+                      step="0.5"
+                      value={lightingConfig.keyPosition?.[2] ?? 5}
+                      onChange={(e) => {
+                        const cur = lightingConfig.keyPosition ?? [5, 8, 5];
+                        onUpdateLighting({ keyPosition: [cur[0], cur[1], Number(e.target.value)] });
+                      }}
+                      className="w-full h-1 accent-blue-400 cursor-pointer"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-1">
-              <div className="flex justify-between text-[10px]">
-                <span className="text-gray-400">Fill Light:</span>
-                <span className="font-mono">{lightingConfig.fillIntensity.toFixed(2)}</span>
+            {/* Fill Light */}
+            <div className="border-t border-[#2a2d36] pt-2 space-y-1">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-gray-400">{language === 'ru' ? 'Заполняющий (Fill Light):' : 'Fill Light:'}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono">{lightingConfig.fillIntensity.toFixed(2)}</span>
+                  <input
+                    type="color"
+                    value={lightingConfig.fillColor || '#dce5ef'}
+                    onChange={(e) => onUpdateLighting({ fillColor: e.target.value })}
+                    className="w-4 h-4 rounded border border-[#3e4350] cursor-pointer bg-transparent"
+                  />
+                </div>
               </div>
               <input
                 type="range"
                 min="0.0"
-                max="2.0"
+                max="2.5"
                 step="0.05"
                 value={lightingConfig.fillIntensity}
                 onChange={(e) => onUpdateLighting({ fillIntensity: Number(e.target.value) })}
@@ -1509,19 +1647,45 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               />
             </div>
 
-            <div className="space-y-1">
-              <div className="flex justify-between text-[10px]">
-                <span className="text-gray-400">Rim Light:</span>
-                <span className="font-mono">{lightingConfig.rimIntensity.toFixed(2)}</span>
+            {/* Rim Light */}
+            <div className="border-t border-[#2a2d36] pt-2 space-y-1">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-gray-400">{language === 'ru' ? 'Контурный (Rim Light):' : 'Rim Light:'}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono">{lightingConfig.rimIntensity.toFixed(2)}</span>
+                  <input
+                    type="color"
+                    value={lightingConfig.rimColor || '#ffffff'}
+                    onChange={(e) => onUpdateLighting({ rimColor: e.target.value })}
+                    className="w-4 h-4 rounded border border-[#3e4350] cursor-pointer bg-transparent"
+                  />
+                </div>
               </div>
               <input
                 type="range"
                 min="0.0"
-                max="3.0"
-                step="0.1"
+                max="3.5"
+                step="0.05"
                 value={lightingConfig.rimIntensity}
                 onChange={(e) => onUpdateLighting({ rimIntensity: Number(e.target.value) })}
-                className="w-full h-1 accent-blue-400 cursor-pointer"
+                className="w-full h-1 accent-indigo-400 cursor-pointer"
+              />
+            </div>
+
+            {/* Environment / Ambient */}
+            <div className="border-t border-[#2a2d36] pt-2 space-y-1">
+              <div className="flex justify-between text-[10px]">
+                <span className="text-gray-400">{language === 'ru' ? 'Окружающий свет (Ambient):' : 'Ambient / Environment:'}</span>
+                <span className="font-mono">{(lightingConfig.environmentIntensity ?? 0.5).toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0.0"
+                max="2.5"
+                step="0.05"
+                value={lightingConfig.environmentIntensity ?? 0.5}
+                onChange={(e) => onUpdateLighting({ environmentIntensity: Number(e.target.value) })}
+                className="w-full h-1 accent-cyan-500 cursor-pointer"
               />
             </div>
           </div>

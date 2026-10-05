@@ -37,7 +37,7 @@ export const CompareInspectorPanel: React.FC<CompareInspectorPanelProps> = ({ sn
           <Table2 className="w-3.5 h-3.5" />
           <span className="font-medium">Compare Metrics</span>
         </div>
-        <span className="ml-auto text-[10px] font-mono text-gray-500">{snapshot.assets.length}/5</span>
+        <span className="ml-auto text-[10px] font-mono text-gray-500">{snapshot.assets.length}/8</span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">

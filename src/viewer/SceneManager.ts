@@ -3,14 +3,17 @@ import { CameraController } from './CameraController';
 import { ExplodedViewController } from './ExplodedViewController';
 import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
+import { SurfaceManager } from './SurfaceManager';
 import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
-import type { HealthIssue, LightingConfig, LightingPreset, RenderMode } from '../types';
+import type { HealthIssue, LightingConfig, LightingPreset, RenderMode, SurfaceType } from '../types';
 import { measureRootMotion } from '../analysis/AnimationAnalyzer';
 
 export interface SceneManagerCallbacks {
   onMeshSelected?: (uuid: string | null) => void;
   onAnimationTimeUpdate?: (time: number, duration: number) => void;
   onAnimationPlaybackStateChange?: (playing: boolean) => void;
+  onLightingChange?: (config: LightingConfig) => void;
+  onModelRotationChange?: (degrees: number) => void;
 }
 
 export class SceneManager {
@@ -20,6 +23,7 @@ export class SceneManager {
   public cameraController: CameraController;
   public lightingManager: LightingManager;
   public renderModeManager: RenderModeManager;
+  public surfaceManager: SurfaceManager;
   public explodedViewController: ExplodedViewController;
 
   private container: HTMLElement;
@@ -31,6 +35,15 @@ export class SceneManager {
   private isPlayingAnimation: boolean = false;
   private animationSpeed: number = 1.0;
   private animationLoop: boolean = true;
+
+  // Model Rotation & Turntable
+  private modelRotationY: number = 0;
+  private isAutoRotating: boolean = false;
+  private autoRotateSpeed: number = 1.0;
+
+  // Interactive Light Dragging
+  private isDraggingLight: boolean = false;
+  private lightDragPlane: THREE.Plane = new THREE.Plane();
 
   // Helpers
   private gridHelper: THREE.GridHelper | null = null;
@@ -69,6 +82,7 @@ export class SceneManager {
   public fps: number = 60;
   private frameCount: number = 0;
   private lastFpsTime: number = performance.now();
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor(container: HTMLElement, callbacks: SceneManagerCallbacks = {}) {
     this.container = container;
@@ -91,7 +105,7 @@ export class SceneManager {
       powerPreference: 'high-performance',
       preserveDrawingBuffer: false,
     });
-    this.renderer.setSize(width, height);
+    this.renderer.setSize(width, height, false);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -99,11 +113,17 @@ export class SceneManager {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    // Ensure the canvas adapts completely to its parent container without leaving empty gaps
+    this.renderer.domElement.style.display = 'block';
+    this.renderer.domElement.style.width = '100%';
+    this.renderer.domElement.style.height = '100%';
+
     container.appendChild(this.renderer.domElement);
     this.initOrientationWidget();
 
     this.cameraController = new CameraController(this.camera, this.renderer.domElement);
     this.lightingManager = new LightingManager(this.scene);
+    this.surfaceManager = new SurfaceManager(this.scene);
     this.renderModeManager = new RenderModeManager(this.scene);
     this.explodedViewController = new ExplodedViewController();
 
@@ -228,10 +248,90 @@ export class SceneManager {
     this.onWindowResize = this.onWindowResize.bind(this);
     window.addEventListener('resize', this.onWindowResize);
 
-    // Viewport click selection
+    // Automatically detect container size changes (e.g. collapsing/expanding scene tree or side panels)
+    if (typeof ResizeObserver !== 'undefined' && this.container) {
+      this.resizeObserver = new ResizeObserver(() => {
+        this.onWindowResize();
+      });
+      this.resizeObserver.observe(this.container);
+    }
+
+    // Hover detection over light bulb gizmo
+    this.renderer.domElement.addEventListener('pointermove', (e) => {
+      if (this.isDraggingLight) return;
+      if (!this.lightingManager.getLightBulbVisible()) return;
+
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      this.mouseVector.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      this.mouseVector.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      this.raycaster.setFromCamera(this.mouseVector, this.camera);
+
+      const bulbHits = this.raycaster.intersectObject(this.lightingManager.getBulbMesh(), false);
+      const isHovered = bulbHits.length > 0;
+      this.lightingManager.setBulbHovered(isHovered);
+      if (isHovered) {
+        this.renderer.domElement.style.cursor = 'grab';
+      } else if (this.renderer.domElement.style.cursor === 'grab') {
+        this.renderer.domElement.style.cursor = '';
+      }
+    });
+
+    // Viewport click selection & light bulb drag
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
-      // Only select on left click without heavy dragging
       if (e.button !== 0) return;
+
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      this.mouseVector.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      this.mouseVector.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      this.raycaster.setFromCamera(this.mouseVector, this.camera);
+
+      // Check if light bulb is clicked for dragging
+      if (this.lightingManager.getLightBulbVisible()) {
+        const bulbHits = this.raycaster.intersectObject(this.lightingManager.getBulbMesh(), false);
+        if (bulbHits.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.isDraggingLight = true;
+          this.cameraController.controls.enabled = false;
+          this.renderer.domElement.style.cursor = 'grabbing';
+
+          // Set drag plane facing camera at the current bulb position
+          const camDir = new THREE.Vector3();
+          this.camera.getWorldDirection(camDir).negate();
+          const bulbPos = this.lightingManager.getKeyLight().position.clone();
+          this.lightDragPlane.setFromNormalAndCoplanarPoint(camDir, bulbPos);
+
+          const onLightMove = (moveEvt: PointerEvent) => {
+            const mRect = this.renderer.domElement.getBoundingClientRect();
+            const mx = ((moveEvt.clientX - mRect.left) / mRect.width) * 2 - 1;
+            const my = -((moveEvt.clientY - mRect.top) / mRect.height) * 2 + 1;
+            this.raycaster.setFromCamera(new THREE.Vector2(mx, my), this.camera);
+
+            const hitPoint = new THREE.Vector3();
+            if (this.raycaster.ray.intersectPlane(this.lightDragPlane, hitPoint)) {
+              // Ensure height stays above surface
+              hitPoint.y = Math.max(0.5, hitPoint.y);
+              this.lightingManager.setKeyLightPosition(hitPoint.x, hitPoint.y, hitPoint.z);
+              this.callbacks.onLightingChange?.(this.lightingManager.getConfig());
+            }
+          };
+
+          const onLightUp = () => {
+            this.isDraggingLight = false;
+            this.cameraController.controls.enabled = true;
+            this.renderer.domElement.style.cursor = '';
+            this.lightingManager.setBulbHovered(false);
+            window.removeEventListener('pointermove', onLightMove);
+            window.removeEventListener('pointerup', onLightUp);
+          };
+
+          window.addEventListener('pointermove', onLightMove);
+          window.addEventListener('pointerup', onLightUp);
+          return;
+        }
+      }
+
+      // Only select on left click without heavy dragging
       const startX = e.clientX;
       const startY = e.clientY;
 
@@ -385,6 +485,8 @@ export class SceneManager {
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
         mesh.frustumCulled = false;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
         const isSkinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh;
 
         // Ensure materials are visible, two-sided, non-zero opacity, and depth-writing
@@ -514,6 +616,10 @@ export class SceneManager {
         const gridScale = Math.max(1, Math.ceil(size / 15));
         this.gridHelper.scale.set(gridScale, 1, gridScale);
       }
+
+      this.surfaceManager.setGroundHeight(finalBounds.box.min.y);
+      this.modelRotationY = 0;
+      this.callbacks.onModelRotationChange?.(0);
     }
 
     // 4. Skeleton Helper
@@ -1478,14 +1584,63 @@ export class SceneManager {
     };
   }
 
+  // Surface Management
+  public setSurface(type: SurfaceType) {
+    this.surfaceManager.setSurface(type);
+  }
+
+  public getSurface(): SurfaceType {
+    return this.surfaceManager.getSurface();
+  }
+
+  // Model Rotation & Turntable Control
+  public setModelRotation(deg: number) {
+    this.modelRotationY = THREE.MathUtils.degToRad(deg);
+    if (this.currentAssetRoot) {
+      this.currentAssetRoot.rotation.y = this.modelRotationY;
+    }
+    this.callbacks.onModelRotationChange?.(deg);
+  }
+
+  public getModelRotation(): number {
+    return Math.round(THREE.MathUtils.radToDeg(this.modelRotationY));
+  }
+
+  public setAutoRotate(enabled: boolean, speed: number = 1.0) {
+    this.isAutoRotating = enabled;
+    this.autoRotateSpeed = speed;
+  }
+
+  public getAutoRotate(): boolean {
+    return this.isAutoRotating;
+  }
+
+  public getAutoRotateSpeed(): number {
+    return this.autoRotateSpeed;
+  }
+
+  public setLightBulbVisible(visible: boolean) {
+    this.lightingManager.setLightBulbVisible(visible);
+  }
+
+  public getLightBulbVisible(): boolean {
+    return this.lightingManager.getLightBulbVisible();
+  }
+
+  public resize() {
+    this.onWindowResize();
+  }
+
   private onWindowResize() {
     if (!this.container) return;
-    const width = this.container.clientWidth || 800;
-    const height = this.container.clientHeight || 600;
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    if (width <= 0 || height <= 0) return;
 
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+    // false keeps width: 100% and height: 100% in CSS, preventing any black gaps on layout shifts
+    this.renderer.setSize(width, height, false);
   }
 
   private startRenderLoop() {
@@ -1507,6 +1662,16 @@ export class SceneManager {
 
       this.cameraController.update();
       this.updateOrientationWidget();
+
+      // Handle Turntable model auto-rotation around its axis
+      if (this.isAutoRotating && this.currentAssetRoot) {
+        this.modelRotationY += this.autoRotateSpeed * 0.015;
+        if (this.modelRotationY > Math.PI * 2) this.modelRotationY -= Math.PI * 2;
+        this.currentAssetRoot.rotation.y = this.modelRotationY;
+        this.callbacks.onModelRotationChange?.(
+          Math.round(THREE.MathUtils.radToDeg(this.modelRotationY))
+        );
+      }
 
       if (this.selectionBoxHelper) {
         this.selectionBoxHelper.update();
@@ -1602,6 +1767,10 @@ export class SceneManager {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
     }
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    }
     window.removeEventListener('resize', this.onWindowResize);
 
     this.disposeCurrentAsset();
@@ -1612,6 +1781,7 @@ export class SceneManager {
     this.orientationAxes = null;
     this.cameraController.dispose();
     this.lightingManager.dispose();
+    this.surfaceManager.dispose();
     this.renderModeManager.dispose();
 
     if (this.renderer) {

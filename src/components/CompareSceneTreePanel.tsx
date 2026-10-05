@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   Box,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Layers,
   Search,
@@ -17,6 +18,8 @@ interface CompareSceneTreePanelProps {
   root: THREE.Group | null;
   fileName?: string;
   slot?: string;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 function buildSceneTree(object: THREE.Object3D): SceneNodeInfo {
@@ -71,8 +74,10 @@ export const CompareSceneTreePanel: React.FC<CompareSceneTreePanelProps> = ({
   root,
   fileName,
   slot,
+  isCollapsed = false,
+  onToggleCollapse,
 }) => {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
 
@@ -161,6 +166,35 @@ export const CompareSceneTreePanel: React.FC<CompareSceneTreePanelProps> = ({
     );
   };
 
+  if (isCollapsed) {
+    return (
+      <aside className="flex h-full w-10 shrink-0 select-none flex-col items-center border-r border-[#262932] bg-[#16181d] py-2">
+        <button
+          onClick={onToggleCollapse}
+          className="rounded p-1.5 text-cyan-400 hover:bg-[#20232a] hover:text-cyan-300 transition cursor-pointer"
+          title={language === 'ru' ? 'Развернуть дерево сцены' : 'Expand scene tree'}
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        {slot && (
+          <span className="mt-2 rounded border border-cyan-900 bg-cyan-950/40 px-1 py-0.5 font-mono text-[9px] text-cyan-300">
+            {slot}
+          </span>
+        )}
+        <div
+          onClick={onToggleCollapse}
+          className="mt-6 flex cursor-pointer flex-col items-center gap-3 group"
+          title={language === 'ru' ? 'Развернуть дерево сцены' : 'Expand scene tree'}
+        >
+          <Layers className="h-4 w-4 text-cyan-400 group-hover:text-cyan-300 transition" />
+          <span className="text-[10px] font-medium tracking-wider uppercase text-gray-400 group-hover:text-gray-200 [writing-mode:vertical-lr] rotate-180 select-none">
+            {t('scene.title')}
+          </span>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="flex h-full w-72 shrink-0 select-none flex-col border-r border-[#262932] bg-[#16181d]">
       <div className="flex h-10 items-center justify-between border-b border-[#262932] bg-[#1a1c22] px-3">
@@ -170,11 +204,22 @@ export const CompareSceneTreePanel: React.FC<CompareSceneTreePanelProps> = ({
             {t('scene.title')}
           </span>
         </div>
-        {slot && (
-          <span className="rounded border border-cyan-900 bg-cyan-950/30 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300">
-            {slot}
-          </span>
-        )}
+        <div className="flex items-center space-x-1.5">
+          {slot && (
+            <span className="rounded border border-cyan-900 bg-cyan-950/30 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300">
+              {slot}
+            </span>
+          )}
+          {onToggleCollapse && (
+            <button
+              onClick={onToggleCollapse}
+              className="rounded p-1 text-gray-400 hover:bg-[#20232a] hover:text-gray-200 transition cursor-pointer"
+              title={language === 'ru' ? 'Свернуть дерево сцены' : 'Collapse scene hierarchy'}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="border-b border-[#262932] p-2">
