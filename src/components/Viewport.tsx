@@ -115,10 +115,14 @@ export const Viewport: React.FC<ViewportProps> = ({
 
   const surfaces: Array<{ id: SurfaceType; labelRu: string; labelEn: string; icon: string }> = [
     { id: 'grid', labelRu: 'Сетка студии', labelEn: 'Studio Grid', icon: '📐' },
+    { id: 'tile', labelRu: 'Керамогранит', labelEn: 'Porcelain Tile', icon: '🏛️' },
+    { id: 'cobblestone', labelRu: 'Брусчатка', labelEn: 'Cobblestone', icon: '🧱' },
+    { id: 'factory', labelRu: 'Завод / Цех', labelEn: 'Factory Floor', icon: '🏭' },
+    { id: 'moon', labelRu: 'Лунная поверхность', labelEn: 'Moon Surface', icon: '🌑' },
+    { id: 'countryside', labelRu: 'Сельская местность', labelEn: 'Countryside', icon: '🌾' },
     { id: 'grass', labelRu: 'Газон (Трава)', labelEn: 'Lawn (Grass)', icon: '🌿' },
     { id: 'road', labelRu: 'Дорога / тротуар', labelEn: 'Road & Sidewalk', icon: '🛣️' },
     { id: 'sand', labelRu: 'Песок', labelEn: 'Sand', icon: '🏖️' },
-    { id: 'tile', labelRu: 'Керамогранит', labelEn: 'Porcelain Tile', icon: '🏛️' },
     { id: 'wood', labelRu: 'Деревянный пол', labelEn: 'Wood Floor', icon: '🪵' },
     { id: 'none', labelRu: 'Без поверхности', labelEn: 'No Surface', icon: '🚫' },
   ];
