@@ -5,6 +5,7 @@ import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
 import { SurfaceManager } from './SurfaceManager';
 import { computeCompareLayout } from '../compare/CompareLayout';
+import { cloneForCompare, disposeCompareClone } from '../compare/CompareClone';
 import { createPresentationWrapper, documentBounds } from './AssetPresentation';
 import type { LightingPreset, RenderMode, SurfaceType } from '../types';
 import type {
@@ -41,6 +42,7 @@ interface LineupRootRuntime {
   asset: CompareAssetRecord;
   root: THREE.Group;
   presentation: THREE.Group;
+  animations: THREE.AnimationClip[];
   mixer: THREE.AnimationMixer | null;
   action: THREE.AnimationAction | null;
   /** Bounds captured once from the authored presentation clone before lineup scaling. */
@@ -407,18 +409,21 @@ export class CompareSceneManager {
 
   public setClip(assetId: string, clipIndex: number) {
     const slot = this.slots.find((runtime) => runtime.asset.id === assetId);
-    if (!slot || !Number.isInteger(clipIndex)) return;
-    const clip = slot.asset.animations[clipIndex];
-    if (!clip || !slot.mixer) return;
+    const lineupEntry = this.lineup?.roots.find((entry) => entry.asset.id === assetId);
+    if (!Number.isInteger(clipIndex)) return;
+    if (!slot?.asset.animations[clipIndex] && !lineupEntry?.animations[clipIndex]) return;
 
     const progress = this.getReferenceNormalizedTime();
-    slot.action?.stop();
-    slot.action = this.createAction(slot.mixer, clip);
+    if (slot?.mixer) {
+      slot.action?.stop();
+      slot.action = this.createAction(slot.mixer, slot.asset.animations[clipIndex]);
+      slot.asset.selectedClipIndex=clipIndex;
+    }
 
-    const lineupEntry = this.lineup?.roots.find((entry) => entry.asset.id === assetId);
     if (lineupEntry?.mixer) {
       lineupEntry.action?.stop();
-      lineupEntry.action = this.createAction(lineupEntry.mixer, clip);
+      lineupEntry.action = this.createAction(lineupEntry.mixer, lineupEntry.animations[clipIndex]);
+      lineupEntry.asset.selectedClipIndex=clipIndex;
     }
 
     if (this.syncAnimations) this.seekNormalized(progress);
@@ -634,7 +639,7 @@ export class CompareSceneManager {
     const roots: LineupRootRuntime[] = [];
 
     for (const asset of this.assets) {
-      const root = asset.root;
+      const {root,animations}=cloneForCompare(asset.root,asset.animations);
       root.visible = true;
       const presentation = createPresentationWrapper(root);
       const sourceBounds = documentBounds(root);
@@ -646,16 +651,17 @@ export class CompareSceneManager {
       const baseScale = new THREE.Vector3(1, 1, 1);
       scene.add(presentation);
 
-      const mixer = asset.animations.length > 0 ? new THREE.AnimationMixer(root) : null;
+      const mixer = animations.length > 0 ? new THREE.AnimationMixer(root) : null;
       let action: THREE.AnimationAction | null = null;
       if (mixer) {
-        const clipIndex = THREE.MathUtils.clamp(asset.selectedClipIndex, 0, asset.animations.length - 1);
-        action = this.createAction(mixer, asset.animations[clipIndex]);
+        const clipIndex = THREE.MathUtils.clamp(asset.selectedClipIndex, 0, animations.length - 1);
+        action = this.createAction(mixer, animations[clipIndex]);
       }
       roots.push({
         asset,
         root,
         presentation,
+        animations,
         mixer,
         action,
         sourceBounds,
@@ -835,6 +841,8 @@ export class CompareSceneManager {
   private getReferenceSlot() {
     return this.slots.find((slot) => slot.asset.id === this.activeAssetId && slot.action)
       ?? this.slots.find((slot) => slot.action)
+      ?? this.lineup?.roots.find(entry=>entry.asset.id===this.activeAssetId && entry.action)
+      ?? this.lineup?.roots.find(entry=>entry.action)
       ?? null;
   }
 
@@ -1119,7 +1127,7 @@ export class CompareSceneManager {
       lineup.renderModeManager.resetAll(entry.root);
       lineup.scene.remove(entry.presentation);
       entry.root.removeFromParent();
-      entry.root.updateMatrixWorld(true);
+      disposeCompareClone(entry.root);
     }
     lineup.renderModeManager.dispose();
     lineup.lightingManager.dispose();

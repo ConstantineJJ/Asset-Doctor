@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { TextureInfo } from '../types';
 import { getAuthoredMaterials } from '../viewer/AuthoredMaterialState';
-import type { GltfSourceAudit } from '../loaders/GltfSourceAudit';
+import { getSourceAudit } from '../loaders/AssetRuntimeMetadata';
 
 export function analyzeTextures(root: THREE.Object3D): TextureInfo[] {
   const texturesMap = new Map<string, { texture: THREE.Texture; materials: Set<string> }>();
@@ -72,7 +72,7 @@ export function analyzeTextures(root: THREE.Object3D): TextureInfo[] {
 
   // LoadingManager records failed dependent resources. Represent them explicitly
   // as invalid texture entries so Health cannot collapse "missing" into N/A.
-  const sourceAudit = root.userData.__assetDoctorSourceAudit as GltfSourceAudit | undefined;
+  const sourceAudit = getSourceAudit(root);
   for (const [index, url] of (sourceAudit?.resourceErrors ?? []).entries()) {
     result.push({
       uuid: `missing-resource-${index}-${url}`,

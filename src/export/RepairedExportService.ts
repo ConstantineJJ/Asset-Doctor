@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getDocumentExtras, getTextureExtras } from '../loaders/AssetRuntimeMetadata';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
@@ -187,6 +188,19 @@ export class RepairedExportService {
       const exportedName = this.makeExportName(assetName);
 
       const exporter = new GLTFExporter();
+      // GLTFExporter omits document/texture extras by default. Preserve only
+      // author extras captured from the pristine source, never runtime state.
+      exporter.register(writer=>({
+        writeTexture(texture,definition) {
+          const extras=getTextureExtras(texture);
+          if(extras !== undefined) definition.extras=extras;
+        },
+        afterParse() {
+          const extras=getDocumentExtras(fresh!.root);
+          // The installed exporter exposes json to plugins; its declaration omits it.
+          if(extras !== undefined) (writer as typeof writer & {json:Record<string,unknown>}).json.extras=extras;
+        },
+      }));
       const exportStart = nowMs();
       const output = await exporter.parseAsync(fresh.root, {
         binary: true,

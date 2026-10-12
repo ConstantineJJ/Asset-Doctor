@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { BoneInfo, DiagnosticLocation } from '../types';
 import { skinnedVertexWorldPosition } from './SkinWeightMeasure';
-import type { GltfSourceAudit } from '../loaders/GltfSourceAudit';
+import { getSourceAudit } from '../loaders/AssetRuntimeMetadata';
 
 export interface SkinningStats {
   skinnedMeshCount: number;
@@ -136,7 +136,7 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
   // GLTFLoader normalizes skin weights on the display geometry. SourceAudit is
   // measured directly from WEIGHTS_0 before that normalization, so diagnostics
   // must retain defects that would otherwise disappear merely by opening a file.
-  const sourceAudit = root.userData.__assetDoctorSourceAudit as GltfSourceAudit | undefined;
+  const sourceAudit = getSourceAudit(root);
   if (sourceAudit?.rawSkinWeights) {
     invalidWeightSumVertices = Math.max(
       invalidWeightSumVertices,

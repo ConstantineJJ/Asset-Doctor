@@ -1,15 +1,6 @@
 import * as THREE from 'three';
 
-const KEY = '__assetDoctorAuthoredMaterials';
-
-function isMaterial(value: unknown): value is THREE.Material {
-  return Boolean(value && typeof value === 'object' && (value as THREE.Material).isMaterial === true);
-}
-
-function isMaterialSet(value: unknown): value is THREE.Material | THREE.Material[] {
-  if (Array.isArray(value)) return value.length > 0 && value.every(isMaterial);
-  return isMaterial(value);
-}
+const authoredMaterials = new WeakMap<THREE.Mesh,THREE.Material | THREE.Material[]>();
 
 function cloneMaterialSet(material: THREE.Material | THREE.Material[], clones: Map<THREE.Material, THREE.Material>) {
   const cloneOne = (source: THREE.Material) => {
@@ -29,18 +20,13 @@ export function captureAuthoredMaterials(root: THREE.Object3D) {
     if (!(object as THREE.Mesh).isMesh) return;
     const mesh = object as THREE.Mesh;
 
-    // Object3D.clone()/SkeletonUtils.clone() deep-serializes userData. Material
-    // objects stored there therefore become plain JSON snapshots on the clone.
-    // They look populated but are not renderable THREE.Material instances. Treat
-    // that stale metadata as absent and replace it with a fresh authored snapshot.
-    if (getAuthoredMaterialSet(mesh)) return;
-    mesh.userData[KEY] = cloneMaterialSet(mesh.material, clones);
+    if (authoredMaterials.has(mesh)) return;
+    authoredMaterials.set(mesh,cloneMaterialSet(mesh.material,clones));
   });
 }
 
 export function getAuthoredMaterialSet(mesh: THREE.Mesh): THREE.Material | THREE.Material[] | null {
-  const value = mesh.userData[KEY];
-  return isMaterialSet(value) ? value : null;
+  return authoredMaterials.get(mesh) ?? null;
 }
 
 export function getAuthoredMaterials(mesh: THREE.Mesh): THREE.Material[] {
@@ -51,4 +37,20 @@ export function getAuthoredMaterials(mesh: THREE.Mesh): THREE.Material[] {
 export function restoreAuthoredMaterials(mesh: THREE.Mesh) {
   const authored = getAuthoredMaterialSet(mesh);
   if (authored) mesh.material = authored;
+}
+
+/** Copy real authored snapshots explicitly, even if the source displays Unlit/Flat. */
+export function copyAuthoredMaterials(source: THREE.Object3D, clone: THREE.Object3D) {
+  const originals: THREE.Object3D[] = [], targets: THREE.Object3D[] = [];
+  source.traverse(object=>originals.push(object)); clone.traverse(object=>targets.push(object));
+  if (originals.length !== targets.length) throw new Error('Clone hierarchy differs from its source');
+  const materials = new Map<THREE.Material,THREE.Material>();
+  originals.forEach((object,index)=>{
+    if (!(object as THREE.Mesh).isMesh) return;
+    const target=targets[index] as THREE.Mesh;
+    if (!target.isMesh) throw new Error('Clone mesh hierarchy differs from its source');
+    const sourceMesh=object as THREE.Mesh;
+    const authored=cloneMaterialSet(getAuthoredMaterialSet(sourceMesh) ?? sourceMesh.material,materials);
+    authoredMaterials.set(target,authored); target.material=authored;
+  });
 }

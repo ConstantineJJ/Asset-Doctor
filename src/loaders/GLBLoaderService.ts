@@ -10,6 +10,7 @@ import {
 } from '../performance/PerformanceProfiler';
 import { auditGltfSource, type GltfSourceAudit } from './GltfSourceAudit';
 import { captureAuthoredMaterials } from '../viewer/AuthoredMaterialState';
+import { captureSourceMetadata } from './AssetRuntimeMetadata';
 import { disposeModelResources } from './ModelResources';
 
 export interface LoadedModelResult {
@@ -158,8 +159,8 @@ export class GLBLoaderService {
 
           // Snapshot authored material state before SceneManager applies any
           // viewport-only visibility/culling/presentation adjustments.
+          captureSourceMetadata(root,sourceAudit,gltf.parser.json,gltf.parser.associations);
           captureAuthoredMaterials(root);
-          root.userData.__assetDoctorSourceAudit = sourceAudit;
           sourceAudit.resourceErrors = [...this.activeResourceErrors];
 
           resolve({
@@ -191,6 +192,7 @@ export class GLBLoaderService {
           }
           const name = fileName || url.split('/').pop() || 'model.glb';
           const root = gltf.scene || new THREE.Group();
+          captureSourceMetadata(root,undefined,gltf.parser.json,gltf.parser.associations);
           captureAuthoredMaterials(root);
           resolve({
             fileName: name,
