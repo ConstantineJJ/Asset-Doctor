@@ -5,6 +5,7 @@ import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
 import { SurfaceManager } from './SurfaceManager';
 import { computeCompareLayout } from '../compare/CompareLayout';
+import { createPresentationWrapper, documentBounds } from './AssetPresentation';
 import type { LightingPreset, RenderMode, SurfaceType } from '../types';
 import type {
   CompareAssetRecord,
@@ -23,6 +24,7 @@ interface CompareSceneManagerCallbacks {
 
 interface SlotRuntime {
   asset: CompareAssetRecord;
+  presentation: THREE.Group;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
@@ -38,6 +40,7 @@ interface SlotRuntime {
 interface LineupRootRuntime {
   asset: CompareAssetRecord;
   root: THREE.Group;
+  presentation: THREE.Group;
   mixer: THREE.AnimationMixer | null;
   action: THREE.AnimationAction | null;
   /** Bounds captured once from the authored presentation clone before lineup scaling. */
@@ -211,11 +214,11 @@ export class CompareSceneManager {
     const rad = THREE.MathUtils.degToRad(deg);
     if (this.lineup) {
       for (const entry of this.lineup.roots) {
-        entry.root.rotation.y = rad;
+        entry.presentation.rotation.y = rad;
       }
     }
     for (const slot of this.slots) {
-      slot.asset.root.rotation.y = rad;
+      slot.presentation.rotation.y = rad;
     }
   }
 
@@ -509,20 +512,17 @@ export class CompareSceneManager {
 
   private prepareAssetRoot(root: THREE.Group) {
     root.visible = true;
-    root.updateMatrixWorld(true);
-    if (root.userData.__assetDoctorCompareGrounded) return;
-    const box = new THREE.Box3().setFromObject(root);
-    if (!box.isEmpty() && Number.isFinite(box.min.y)) {
-      root.position.y -= box.min.y;
-      root.updateMatrixWorld(true);
-    }
-    root.userData.__assetDoctorCompareGrounded = true;
+    root.updateWorldMatrix(true, true);
   }
 
   private createSlotRuntime(asset: CompareAssetRecord): SlotRuntime {
     const scene = this.createScene();
-    scene.add(asset.root);
-    asset.root.updateMatrixWorld(true);
+    const presentation = createPresentationWrapper(asset.root);
+    presentation.rotation.y = THREE.MathUtils.degToRad(this.modelRotationY);
+    scene.add(presentation);
+    const initialBounds = BoundsCalculator.computeAccurateWorldBounds(asset.root);
+    if (initialBounds.isValid) presentation.position.y -= initialBounds.box.min.y;
+    asset.root.updateWorldMatrix(true, true);
 
     const boundsResult = BoundsCalculator.computeAccurateWorldBounds(asset.root);
     const bounds = boundsResult.isValid ? boundsResult.box.clone() : new THREE.Box3().setFromObject(asset.root);
@@ -550,6 +550,7 @@ export class CompareSceneManager {
     const mixer = asset.animations.length > 0 ? new THREE.AnimationMixer(asset.root) : null;
     const runtime: SlotRuntime = {
       asset,
+      presentation,
       scene,
       camera,
       controls,
@@ -635,19 +636,15 @@ export class CompareSceneManager {
     for (const asset of this.assets) {
       const root = asset.root;
       root.visible = true;
-      root.position.set(0, 0, 0);
-      root.scale.set(1, 1, 1);
-      root.rotation.set(0, 0, 0);
-      root.updateMatrixWorld(true);
-
-      const sourceBounds = new THREE.Box3().setFromObject(root);
+      const presentation = createPresentationWrapper(root);
+      const sourceBounds = documentBounds(root);
       if (sourceBounds.isEmpty() || !Number.isFinite(sourceBounds.min.x)) {
         sourceBounds.set(new THREE.Vector3(-0.5, 0, -0.5), new THREE.Vector3(0.5, 1, 0.5));
       }
       const sourceSize = sourceBounds.getSize(new THREE.Vector3());
       const basePosition = new THREE.Vector3(0, 0, 0);
       const baseScale = new THREE.Vector3(1, 1, 1);
-      scene.add(root);
+      scene.add(presentation);
 
       const mixer = asset.animations.length > 0 ? new THREE.AnimationMixer(root) : null;
       let action: THREE.AnimationAction | null = null;
@@ -658,6 +655,7 @@ export class CompareSceneManager {
       roots.push({
         asset,
         root,
+        presentation,
         mixer,
         action,
         sourceBounds,
@@ -740,10 +738,10 @@ export class CompareSceneManager {
       const factor = factors[i];
 
       // Reset to origin first to calculate accurate transformed bounding box
-      entry.root.scale.copy(entry.baseScale).multiplyScalar(factor);
-      entry.root.position.set(0, 0, 0);
-      entry.root.rotation.y = THREE.MathUtils.degToRad(this.modelRotationY);
-      entry.root.updateMatrixWorld(true);
+      entry.presentation.scale.copy(entry.baseScale).multiplyScalar(factor);
+      entry.presentation.position.set(0, 0, 0);
+      entry.presentation.rotation.y = THREE.MathUtils.degToRad(this.modelRotationY);
+      entry.presentation.updateWorldMatrix(true, true);
 
       const box = new THREE.Box3().setFromObject(entry.root);
       if (box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.x)) {
@@ -756,14 +754,14 @@ export class CompareSceneManager {
       const minX = Number.isFinite(box.min.x) ? box.min.x : 0;
 
       // 1. Center in depth along Z=0 axis so models form a clean straight lineup
-      entry.root.position.z = -centerZ;
+      entry.presentation.position.z = -centerZ;
 
       // 2. Sit precisely level on the ground at Y = 0 (no floating, no sunken models)
-      entry.root.position.y = -minY;
+      entry.presentation.position.y = -minY;
 
       // 3. Align along X starting at cursorX
-      entry.root.position.x = cursorX - minX;
-      entry.root.updateMatrixWorld(true);
+      entry.presentation.position.x = cursorX - minX;
+      entry.presentation.updateWorldMatrix(true, true);
 
       // Update final combined bounds
       const finalBox = new THREE.Box3().setFromObject(entry.root);
@@ -1051,11 +1049,11 @@ export class CompareSceneManager {
         const rad = THREE.MathUtils.degToRad(this.modelRotationY);
         if (this.lineup) {
           for (const entry of this.lineup.roots) {
-            entry.root.rotation.y = rad;
+            entry.presentation.rotation.y = rad;
           }
         }
         for (const slot of this.slots) {
-          slot.asset.root.rotation.y = rad;
+          slot.presentation.rotation.y = rad;
         }
         this.callbacks.onModelRotationChange?.(Math.round(this.modelRotationY));
       }
@@ -1104,7 +1102,8 @@ export class CompareSceneManager {
       slot.renderModeManager.dispose();
       slot.lightingManager.dispose();
       slot.surfaceManager.dispose();
-      slot.scene.remove(slot.asset.root);
+      slot.scene.remove(slot.presentation);
+      slot.asset.root.removeFromParent();
       this.disposeSceneHelpers(slot.scene);
     }
     this.slots = [];
@@ -1118,10 +1117,8 @@ export class CompareSceneManager {
       entry.mixer?.stopAllAction();
       if (entry.mixer) entry.mixer.uncacheRoot(entry.root);
       lineup.renderModeManager.resetAll(entry.root);
-      lineup.scene.remove(entry.root);
-      entry.root.position.set(0, 0, 0);
-      entry.root.scale.set(1, 1, 1);
-      entry.root.rotation.set(0, 0, 0);
+      lineup.scene.remove(entry.presentation);
+      entry.root.removeFromParent();
       entry.root.updateMatrixWorld(true);
     }
     lineup.renderModeManager.dispose();

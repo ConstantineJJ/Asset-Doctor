@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { analyzeMeshTopology, type RawMeshData } from '../analysis/TopologyAnalyzer';
 import type { TopologyPerformanceStats, TopologyStats } from '../types';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
+import { documentMatrix } from '../viewer/AssetPresentation';
 import { nowMs, performanceCore } from '../performance/PerformanceProfiler';
 
 const WORKER_TASK_TIMEOUT_MS = 15000;
@@ -92,7 +93,7 @@ export class WorkerManager {
       cached.positionVersion !== attributeVersion(position) ||
       cached.indexArray !== (index?.array ?? null) ||
       cached.indexVersion !== (index?.version ?? 0) ||
-      !arraysEqual(cached.matrixWorld, mesh.matrixWorld)
+      !arraysEqual(cached.matrixWorld, documentMatrix(mesh))
     ) {
       return null;
     }
@@ -109,7 +110,7 @@ export class WorkerManager {
       positionVersion: attributeVersion(position),
       indexArray: index?.array ?? null,
       indexVersion: index?.version ?? 0,
-      matrixWorld: Array.from(mesh.matrixWorld.elements),
+      matrixWorld: Array.from(documentMatrix(mesh).elements),
       stats,
     });
   }

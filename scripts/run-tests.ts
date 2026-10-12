@@ -9,6 +9,7 @@ import { runGltfSourceAuditTests } from '../src/loaders/GltfSourceAuditTests';
 import { runGLBLoaderServiceTests } from '../src/loaders/GLBLoaderServiceTests';
 import { runAuthoredMaterialStateTests } from '../src/viewer/AuthoredMaterialStateTests';
 import { runShadingModeTests } from '../src/viewer/ShadingModeTests';
+import { runAssetPresentationTests } from '../src/viewer/AssetPresentationTests';
 import {
   runSurgicalHealIntegrationTests,
   runSurgicalHealTests,
@@ -26,6 +27,7 @@ async function main() {
     ...(await runGLBLoaderServiceTests()),
     ...runAuthoredMaterialStateTests(),
     ...runShadingModeTests(),
+    ...(await runAssetPresentationTests()),
     ...runSurgicalHealTests(),
     ...(await runSurgicalHealIntegrationTests(new Uint8Array(
       readFileSync('tests/browser/fixtures/two-scenes.glb')

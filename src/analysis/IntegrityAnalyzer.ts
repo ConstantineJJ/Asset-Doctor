@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { DiagnosticLocation, HealthIssue } from '../types';
+import { documentMatrix } from '../viewer/AssetPresentation';
 
 const MAX_LOCATION_SAMPLES = 16;
 
@@ -22,7 +23,7 @@ function pushVertexLocation(
   const z = position.getZ(vertexIndex);
   if (![x, y, z].every(Number.isFinite)) return;
 
-  const world = new THREE.Vector3(x, y, z).applyMatrix4(mesh.matrixWorld);
+  const world = new THREE.Vector3(x, y, z).applyMatrix4(documentMatrix(mesh));
   if (![world.x, world.y, world.z].every(Number.isFinite)) return;
 
   list.push({

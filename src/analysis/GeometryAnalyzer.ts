@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import type { AssetSummary, BoundingBoxInfo, SceneNodeInfo } from '../types';
 import { performanceCore } from '../performance/PerformanceProfiler';
+import { documentBounds } from '../viewer/AssetPresentation';
 
 export function calculateBoundingBox(object: THREE.Object3D): BoundingBoxInfo {
-  const box = new THREE.Box3().setFromObject(object);
+  const box = documentBounds(object);
   if (box.isEmpty()) {
     return {
       min: [0, 0, 0],

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { documentMatrix } from '../viewer/AssetPresentation';
 
 export interface GeometryNormalMeasurement {
   vertexCount: number;
@@ -87,7 +88,7 @@ export function vertexWorldPosition(
   if (!position || vertexIndex < 0 || vertexIndex >= position.count) {
     mesh.geometry.computeBoundingBox();
     const center = mesh.geometry.boundingBox?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3();
-    mesh.localToWorld(center);
+    center.applyMatrix4(documentMatrix(mesh));
     return [center.x, center.y, center.z];
   }
 
@@ -96,6 +97,6 @@ export function vertexWorldPosition(
     position.getY(vertexIndex),
     position.getZ(vertexIndex)
   );
-  mesh.localToWorld(point);
+  point.applyMatrix4(documentMatrix(mesh));
   return [point.x, point.y, point.z];
 }

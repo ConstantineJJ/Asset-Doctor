@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { RawMeshData } from './TopologyAnalyzer';
+import { documentMatrix } from '../viewer/AssetPresentation';
 
 /** Use mesh-local positions AND scale for both diagnosis and repair verification. */
 export function meshTopologyData(mesh: THREE.Mesh): RawMeshData {
@@ -34,6 +35,6 @@ export function meshTopologyData(mesh: THREE.Mesh): RawMeshData {
     positions,
     indices,
     boundingBoxDiagonal: box.isEmpty() ? 0 : box.getSize(point).length(),
-    worldMatrix: Array.from(mesh.matrixWorld.elements),
+    worldMatrix: Array.from(documentMatrix(mesh).elements),
   };
 }

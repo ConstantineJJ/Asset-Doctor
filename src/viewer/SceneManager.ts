@@ -7,6 +7,7 @@ import { SurfaceManager } from './SurfaceManager';
 import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
 import type { HealthIssue, LightingConfig, LightingPreset, RenderMode, SurfaceType } from '../types';
 import { measureRootMotion } from '../analysis/AnimationAnalyzer';
+import { createPresentationWrapper, documentToViewer } from './AssetPresentation';
 
 export interface SceneManagerCallbacks {
   onMeshSelected?: (uuid: string | null) => void;
@@ -28,6 +29,7 @@ export class SceneManager {
 
   private container: HTMLElement;
   private currentAssetRoot: THREE.Group | null = null;
+  private presentationWrapper: THREE.Group | null = null;
   private animationMixer: THREE.AnimationMixer | null = null;
   private activeAnimationAction: THREE.AnimationAction | null = null;
   private animationClips: THREE.AnimationClip[] = [];
@@ -465,7 +467,8 @@ export class SceneManager {
     this.clearIssueLocalization();
 
     this.currentAssetRoot = assetRoot;
-    this.scene.add(this.currentAssetRoot);
+    this.presentationWrapper = createPresentationWrapper(assetRoot);
+    this.scene.add(this.presentationWrapper);
 
     // Ensure root and children are visible, on default layer, with updated matrices
     assetRoot.visible = true;
@@ -577,14 +580,14 @@ export class SceneManager {
       const minY = initialBounds.box.min.y;
       // Only align if base is offset from 0 and within sensible limits (< 50,000)
       if (Math.abs(minY) > 0.001 && Math.abs(minY) < 50000) {
-        assetRoot.position.y -= minY;
+        this.presentationWrapper.position.y -= minY;
       }
     } else {
       console.warn('[AssetDoctor GroundAlignment] Initial bounds invalid or extreme, skipping ground shift:', initialBounds.warning);
     }
 
     // Update matrices again after alignment
-    assetRoot.updateMatrixWorld(true);
+    assetRoot.updateWorldMatrix(true, true);
     assetRoot.traverse((obj) => {
       obj.frustumCulled = false;
       if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
@@ -1390,7 +1393,9 @@ export class SceneManager {
       ? [primaryFocus.x, primaryFocus.y, primaryFocus.z]
       : overlay
         ? [overlay.center.x, overlay.center.y, overlay.center.z]
-        : issue.focusPosition;
+        : issue.focusPosition && this.currentAssetRoot
+          ? documentToViewer(this.currentAssetRoot, issue.focusPosition)
+          : issue.focusPosition;
 
     if (focusTuple) {
       let targetDistance: number | undefined;
@@ -1596,8 +1601,8 @@ export class SceneManager {
   // Model Rotation & Turntable Control
   public setModelRotation(deg: number) {
     this.modelRotationY = THREE.MathUtils.degToRad(deg);
-    if (this.currentAssetRoot) {
-      this.currentAssetRoot.rotation.y = this.modelRotationY;
+    if (this.presentationWrapper) {
+      this.presentationWrapper.rotation.y = this.modelRotationY;
     }
     this.callbacks.onModelRotationChange?.(deg);
   }
@@ -1664,10 +1669,10 @@ export class SceneManager {
       this.updateOrientationWidget();
 
       // Handle Turntable model auto-rotation around its axis
-      if (this.isAutoRotating && this.currentAssetRoot) {
+      if (this.isAutoRotating && this.presentationWrapper) {
         this.modelRotationY += this.autoRotateSpeed * 0.015;
         if (this.modelRotationY > Math.PI * 2) this.modelRotationY -= Math.PI * 2;
-        this.currentAssetRoot.rotation.y = this.modelRotationY;
+        this.presentationWrapper.rotation.y = this.modelRotationY;
         this.callbacks.onModelRotationChange?.(
           Math.round(THREE.MathUtils.radToDeg(this.modelRotationY))
         );
@@ -1757,7 +1762,9 @@ export class SceneManager {
       }
     });
 
-    this.scene.remove(this.currentAssetRoot);
+    if (this.presentationWrapper) this.scene.remove(this.presentationWrapper);
+    this.currentAssetRoot.removeFromParent();
+    this.presentationWrapper = null;
     this.currentAssetRoot.clear();
     this.currentAssetRoot = null;
     this.selectedMeshUuid = null;

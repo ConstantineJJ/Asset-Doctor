@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { HealthIssue } from '../types';
+import { documentBounds } from '../viewer/AssetPresentation';
 
 const SCALE_EPSILON = 0.001;
 const ROTATION_INFO_THRESHOLD_DEG = 1;
@@ -134,7 +135,7 @@ export function analyzeTransforms(root: THREE.Object3D): HealthIssue[] {
   }
 
   // Check model distance from origin.
-  const box = new THREE.Box3().setFromObject(root);
+  const box = documentBounds(root);
   if (!box.isEmpty()) {
     const center = new THREE.Vector3();
     box.getCenter(center);

@@ -29,6 +29,7 @@ export class BoundsCalculator {
    */
   public static computeAccurateWorldBounds(object: THREE.Object3D): AccurateBoundsResult {
     // 1. Ensure object and descendants have up-to-date world matrices
+    object.updateWorldMatrix(true, false);
     object.updateMatrixWorld(true);
 
     const worldBox = new THREE.Box3();
@@ -89,6 +90,7 @@ export class BoundsCalculator {
    * vertices transformed by bone matrices and inverse bind matrices.
    */
   public static computeSkinnedMeshWorldBounds(skinnedMesh: THREE.SkinnedMesh): THREE.Box3 {
+    skinnedMesh.updateWorldMatrix(true, false);
     skinnedMesh.updateMatrixWorld(true);
     const box = new THREE.Box3();
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { HealthIssue } from '../types';
 import { analyzeAnimations } from './AnimationAnalyzer';
+import { documentBounds } from '../viewer/AssetPresentation';
 
 function getRootBoneNames(root: THREE.Object3D): string[] {
   const names: string[] = [];
@@ -85,7 +86,7 @@ export function analyzeAnimationDiagnostics(
   const oneClip = (names: Set<string>): string | undefined =>
     names.size === 1 ? Array.from(names)[0] : undefined;
 
-  const bounds = new THREE.Box3().setFromObject(root);
+  const bounds = documentBounds(root);
   const diagonal = bounds.isEmpty() ? 0 : bounds.getSize(new THREE.Vector3()).length();
   const jumpThreshold = Math.max(1, diagonal * 2);
 

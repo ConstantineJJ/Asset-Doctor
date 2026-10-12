@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { documentMatrix } from '../viewer/AssetPresentation';
 import type { HealApplyResult, HealOperationReport, HealPreview, HealUndoState } from '../types';
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
@@ -585,7 +586,7 @@ export class SurgicalHealEngine {
     const probe = new THREE.Mesh(planned.replacement);
     probe.name = mesh.name;
     probe.uuid = mesh.uuid;
-    probe.matrixWorld.copy(mesh.matrixWorld);
+    probe.matrixWorld.copy(documentMatrix(mesh));
 
     let after;
     try {

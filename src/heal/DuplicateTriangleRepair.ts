@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { documentMatrix } from '../viewer/AssetPresentation';
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
 import type { TopologyStats } from '../types';
@@ -145,7 +146,7 @@ export function planRemoveExactDuplicateTriangles(
   const probe = new THREE.Mesh(probeGeometry, mesh.material);
   probe.name = mesh.name;
   probe.uuid = mesh.uuid;
-  probe.matrixWorld.copy(mesh.matrixWorld);
+  probe.matrixWorld.copy(documentMatrix(mesh));
 
   let after: TopologyStats;
   try {
