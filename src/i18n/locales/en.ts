@@ -236,6 +236,7 @@ export const en = {
     },
     reasons: {
       triangleCount: 'Total triangle count changed during serialization.',
+      nodeStructure: 'Scene nodes, their names, types or hierarchy changed after serialization.',
       targetTriangles: 'Target mesh triangle count does not match the verified Heal result.',
       targetDegenerates: 'Target degenerate-triangle count does not match the verified Heal result.',
       targetVertices: 'Target mesh vertex count does not match the verified Heal result.',
@@ -260,6 +261,9 @@ export const en = {
     },
     errors: {
       unavailable: 'Export is available only for the current, fully VERIFIED Heal result.',
+      multiSceneUnsupported: 'Repaired export is not supported for documents with multiple scenes. The original file and current model are unchanged. Export a single-scene GLB from your authoring tool first.',
+      sceneStructureUnsupported: 'Repaired export requires a document with one scene. The original file and current model are unchanged.',
+      unreachableNodesUnsupported: 'Repaired export is not supported when source nodes exist outside the scene hierarchy. The original file and current model are unchanged.',
       healNotVerified: 'The current Heal operation is not fully VERIFIED.',
       historicalReport: 'This Heal report is historical; live repair geometry is not available for export.',
       targetMissing: 'The repaired target mesh is no longer available.',

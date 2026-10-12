@@ -14,6 +14,8 @@ export interface GltfSourceAudit {
   extensionsRequired: string[];
   semanticExtensions: string[];
   externalUris: string[];
+  sceneCount: number;
+  unreachableNodeCount: number;
   materialCount: number;
   textureCount: number;
   imageCount: number;
@@ -173,6 +175,19 @@ function inspectRawSkinWeights(json: any, bin?: Uint8Array): RawSkinWeightAudit 
   return result;
 }
 
+function countUnreachableNodes(json: any): number {
+  const nodes = json.nodes ?? [];
+  const pending = [...(json.scenes?.[json.scene ?? 0]?.nodes ?? [])];
+  const reachable = new Set<number>();
+  while (pending.length > 0) {
+    const index = pending.pop();
+    if (!Number.isInteger(index) || !nodes[index] || reachable.has(index)) continue;
+    reachable.add(index);
+    pending.push(...(nodes[index].children ?? []));
+  }
+  return nodes.length - reachable.size;
+}
+
 export function auditGltfSource(buffer: ArrayBuffer): GltfSourceAudit {
   const parsed = parseSource(buffer);
   if (!parsed) {
@@ -182,6 +197,8 @@ export function auditGltfSource(buffer: ArrayBuffer): GltfSourceAudit {
       extensionsRequired: [],
       semanticExtensions: [],
       externalUris: [],
+      sceneCount: 0,
+      unreachableNodeCount: 0,
       materialCount: 0,
       textureCount: 0,
       imageCount: 0,
@@ -197,6 +214,8 @@ export function auditGltfSource(buffer: ArrayBuffer): GltfSourceAudit {
     extensionsRequired: Array.from(new Set<string>(parsed.json.extensionsRequired ?? [])),
     semanticExtensions: extensionsUsed.filter((name) => !TRANSPORT_ONLY_EXTENSIONS.has(name)),
     externalUris: collectExternalUris(parsed.json),
+    sceneCount: parsed.json.scenes?.length ?? 0,
+    unreachableNodeCount: countUnreachableNodes(parsed.json),
     materialCount: parsed.json.materials?.length ?? 0,
     textureCount: parsed.json.textures?.length ?? 0,
     imageCount: parsed.json.images?.length ?? 0,

@@ -92,6 +92,14 @@ export class RepairedExportService {
       ? auditGltfSource(request.source.buffer)
       : undefined;
 
+    // The loader exposes only the default scene. Reject document structures
+    // that cannot roundtrip before loading or patching a pristine export copy.
+    if (sourceAudit) {
+      if (sourceAudit.sceneCount > 1) throw new Error('export.errors.multiSceneUnsupported');
+      if (sourceAudit.sceneCount !== 1) throw new Error('export.errors.sceneStructureUnsupported');
+      if (sourceAudit.unreachableNodeCount > 0) throw new Error('export.errors.unreachableNodesUnsupported');
+    }
+
     if (healReports.length === 0) {
       throw new Error('export.errors.healNotVerified');
     }
@@ -223,6 +231,13 @@ export class RepairedExportService {
       if (expectedMaterialSignature !== actualMaterialSignature) reasons.push('materialStructure');
       if (expectedRigSignature !== actualRigSignature) reasons.push('rigStructure');
       if (expectedAnimationSignature !== actualAnimationSignature) reasons.push('animationStructure');
+      // GLTFExporter wraps a Group input in a scene. Check the exported root
+      // inside that wrapper, including non-mesh nodes and their parentage.
+      if (reopened.root.children.length !== 1 ||
+          this.nodeStructureSignature(fresh.root) !==
+            this.nodeStructureSignature(reopened.root.children[0])) {
+        reasons.push('nodeStructure');
+      }
 
       for (const ordinal of repairedOrdinals) {
         const expectedMesh = currentMeshes[ordinal];
@@ -448,6 +463,22 @@ export class RepairedExportService {
     }
 
     copyGeometryData(fresh.geometry, current.geometry);
+  }
+
+  private nodeStructureSignature(root: THREE.Object3D): string {
+    const describe = (node: THREE.Object3D): unknown => [
+      node.name,
+      (node as THREE.SkinnedMesh).isSkinnedMesh ? 'skinnedMesh'
+        : (node as THREE.Mesh).isMesh ? 'mesh'
+        : (node as THREE.Bone).isBone ? 'bone'
+        : (node as THREE.Camera).isCamera ? 'camera'
+        : (node as THREE.Light).isLight ? 'light'
+        : (node as THREE.Line).isLine ? 'line'
+        : (node as THREE.Points).isPoints ? 'points'
+        : 'node',
+      node.children.map(describe),
+    ];
+    return JSON.stringify(describe(root));
   }
 
   private meshSignature(meshes: THREE.Mesh[]) {

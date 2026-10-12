@@ -107,5 +107,28 @@ export function runGltfSourceAuditTests(): TestResult[] {
     expected: ['mesh.bin', 'albedo.png'],
   });
 
+  const multiScene = auditGltfSource(makeGlb({
+    asset: { version: '2.0' }, scene: 0,
+    scenes: [{ nodes: [0] }, { nodes: [1] }],
+    nodes: [{ name: 'Primary' }, { name: 'SecondaryOnly' }],
+  }, new Uint8Array(0)));
+  results.push({
+    name: 'Source audit counts every scene before the default-scene loader discards the rest',
+    passed: multiScene.sceneCount === 2 && multiScene.unreachableNodeCount === 1,
+    actual: [multiScene.sceneCount, multiScene.unreachableNodeCount],
+    expected: [2, 1],
+  });
+  const hierarchy = auditGltfSource(makeGlb({
+    asset: { version: '2.0' }, scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ children: [1] }, { name: 'CriticalAnchor' }],
+  }, new Uint8Array(0)));
+  results.push({
+    name: 'Source audit accepts reachable non-mesh nodes in the single-scene hierarchy',
+    passed: hierarchy.sceneCount === 1 && hierarchy.unreachableNodeCount === 0,
+    actual: [hierarchy.sceneCount, hierarchy.unreachableNodeCount],
+    expected: [1, 0],
+  });
+
   return results;
 }

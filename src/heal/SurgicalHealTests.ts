@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { SurgicalHealEngine } from './SurgicalHealEngine';
 import { healMetrics, verifyHeal } from './HealVerification';
 import { readHealReport, saveHealReport } from './HealReportStorage';
@@ -1482,7 +1483,7 @@ function installFileReaderPolyfillForTests(): () => void {
   };
 }
 
-export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTestResult[]> {
+export async function runSurgicalHealIntegrationTests(fidelityFixture: ArrayBuffer): Promise<SurgicalHealTestResult[]> {
   const results: SurgicalHealTestResult[] = [];
 
   const pushQueueCase = async (
@@ -1639,6 +1640,86 @@ export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTes
       outcome.stopCode === 'targetReturned' &&
       outcome.completed === 1
   );
+
+  // F01: inject a serializer that loses a non-mesh node. Matching triangle and
+  // material counts must not certify the incomplete scene hierarchy.
+  {
+    const rewriteJson = (buffer: ArrayBuffer, json: any): ArrayBuffer => {
+      const original = new Uint8Array(buffer);
+      const oldLength = new DataView(buffer).getUint32(12, true);
+      const binaryChunk = original.subarray(20 + oldLength);
+      const encoded = new TextEncoder().encode(JSON.stringify(json));
+      const length = Math.ceil(encoded.length / 4) * 4;
+      const result = new ArrayBuffer(20 + length + binaryChunk.length);
+      const bytes = new Uint8Array(result);
+      bytes.set(original.subarray(0, 12));
+      const view = new DataView(result);
+      view.setUint32(8, result.byteLength, true);
+      view.setUint32(12, length, true);
+      view.setUint32(16, 0x4e4f534a, true);
+      bytes.fill(32, 20, 20 + length);
+      bytes.set(encoded, 20);
+      bytes.set(binaryChunk, 20 + length);
+      return result;
+    };
+    const readJson = (buffer: ArrayBuffer) => JSON.parse(new TextDecoder().decode(
+      new Uint8Array(buffer, 20, new DataView(buffer).getUint32(12, true))
+    ).trim());
+    const restoreFileReader = installFileReaderPolyfillForTests();
+    const loader = new GLBLoaderService();
+    const engine = new SurgicalHealEngine();
+    const originalParse = GLTFExporter.prototype.parseAsync;
+    let root: THREE.Group | null = null;
+    try {
+      const json = readJson(fidelityFixture);
+      json.scenes = [{ nodes: [0, 1] }];
+      json.nodes = [json.nodes[0], { name: 'CriticalAnchor' }];
+      json.meshes = [json.meshes[0]];
+      const source = rewriteJson(fidelityFixture, json);
+      const loaded = await loader.loadFromArrayBuffer(source, 'single-scene.glb');
+      root = loaded.root;
+      const mesh = root.children.find((node) => (node as THREE.Mesh).isMesh)!;
+      const preview = engine.previewRemoveDegenerateTriangles(root, mesh.uuid);
+      if (preview.status !== 'READY') throw new Error('F01 fixture preview not READY');
+      const applied = engine.applyPending(root, 'single-scene.glb');
+      if (!applied.success || !applied.report) throw new Error('F01 fixture apply failed');
+      engine.completeVerification(applied.report.operationId, true);
+      GLTFExporter.prototype.parseAsync = async function (...args) {
+        const output = await originalParse.apply(this, args) as ArrayBuffer;
+        const document = readJson(output);
+        const removed = document.nodes.findIndex((node: any) => node.name === 'CriticalAnchor');
+        if (removed < 0) throw new Error('F01 serializer injection target missing');
+        document.nodes.splice(removed, 1);
+        const remap = (ids: number[]) => ids.filter(index => index !== removed)
+          .map(index => index > removed ? index - 1 : index);
+        for (const node of document.nodes) if (node.children) node.children = remap(node.children);
+        for (const scene of document.scenes) scene.nodes = remap(scene.nodes);
+        return rewriteJson(output, document);
+      };
+      const exported = await new RepairedExportService().exportAndVerify({
+        source: { kind: 'buffer', fileName: 'single-scene.glb', buffer: source },
+        currentRoot: root, assetName: 'single-scene.glb', healReports: engine.getActiveReports(),
+      });
+      results.push({
+        name: 'F01 lost non-mesh node prevents VERIFIED despite unchanged mesh counts',
+        description: 'A fresh reopen must verify the complete node hierarchy.',
+        expected: 'REGRESSION with nodeStructure and unchanged mesh counts',
+        actual: `${exported.report.status}; ${exported.report.reasons.join(',')}`,
+        passed: exported.report.status === 'REGRESSION' && exported.report.reasons.includes('nodeStructure') &&
+          exported.report.meshCountExpected === exported.report.meshCountActual,
+      });
+    } catch (error) {
+      results.push({ name: 'F01 lost non-mesh node prevents VERIFIED despite unchanged mesh counts',
+        description: 'Serialization-loss regression', expected: 'REGRESSION with nodeStructure',
+        actual: String(error), passed: false });
+    } finally {
+      GLTFExporter.prototype.parseAsync = originalParse;
+      engine.clear();
+      if (root) disposeObjectForTest(root);
+      loader.dispose();
+      restoreFileReader();
+    }
+  }
 
   // E2 export/reopen integration: repair multiple meshes plus two dependent
   // operations on the same mesh, export from a pristine source, reopen it, and

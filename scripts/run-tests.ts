@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { runSyntheticTopologyTests } from '../src/analysis/SyntheticTopologyTests';
 import { runFileIOTests } from '../src/platform/FileIOTests';
 import { runDiagnosticCoreTests } from '../src/analysis/DiagnosticCoreTests';
@@ -26,7 +27,9 @@ async function main() {
     ...runAuthoredMaterialStateTests(),
     ...runShadingModeTests(),
     ...runSurgicalHealTests(),
-    ...(await runSurgicalHealIntegrationTests()),
+    ...(await runSurgicalHealIntegrationTests(new Uint8Array(
+      readFileSync('tests/browser/fixtures/two-scenes.glb')
+    ).buffer)),
   ];
 
   for (const result of results) {
