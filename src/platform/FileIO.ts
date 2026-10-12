@@ -2,6 +2,16 @@ import { isTauri } from '@tauri-apps/api/core';
 
 export { isTauri as isDesktop };
 
+/** Only an affirmative answer authorizes repair; dialog errors reject to the caller. */
+export async function confirmRepairQueue(message: string): Promise<boolean> {
+  if (isTauri()) {
+    const { confirm } = await import('@tauri-apps/plugin-dialog');
+    return await confirm(message, { title: 'Asset Doctor — Safe Repair Queue', kind: 'warning' }) === true;
+  }
+  // The frontend regression harness also exercises asynchronous dialog results.
+  return await window.confirm(message) === true;
+}
+
 /** The dialog grants scope for selected paths; no whole-disk capability is needed. */
 export async function pickModelFiles(multiple = false): Promise<File[]> {
   const [{ open }, { readFile }] = await Promise.all([

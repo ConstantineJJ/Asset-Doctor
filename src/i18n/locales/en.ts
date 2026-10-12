@@ -185,6 +185,7 @@ export const en = {
       remaining: 'Remaining',
       current: 'Current',
       confirm: 'Run Safe Repair Queue for {{count}} candidate(s)? Every step will be re-evaluated as Preview → Apply → Rescan → Verify. The queue stops immediately on REGRESSION or PARTIAL.',
+      confirmFailed: 'The repair queue was cancelled because confirmation could not be opened. No repairs were applied.',
       stopRequested: 'Stop requested. The current step will finish verification first.',
       stoppedByUser: 'Stopped by user after the current verified step.',
       assetChanged: 'The active asset changed. Queue stopped.',

@@ -1,5 +1,5 @@
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { pickModelFiles, saveBinaryFile } from './FileIO';
+import { confirmRepairQueue, pickModelFiles, saveBinaryFile } from './FileIO';
 
 export async function runFileIOTests() {
   const results: { name: string; passed: boolean; actual?: unknown; expected?: unknown }[] = [];
@@ -8,6 +8,31 @@ export async function runFileIOTests() {
   Object.defineProperty(globalThis, 'window', { value: { crypto }, configurable: true });
   Object.defineProperty(globalThis, 'isTauri', { value: true, configurable: true });
   try {
+    let messageCalls = 0;
+    let releaseConfirm!: (result: string) => void;
+    const confirmationBarrier = new Promise<string>(resolve => { releaseConfirm = resolve; });
+    mockIPC(command => {
+      if (command === 'plugin:dialog|message') { messageCalls++; return confirmationBarrier; }
+      throw new Error(`Unexpected confirmation command: ${command}`);
+    });
+    let confirmationSettled = false;
+    const confirmation = confirmRepairQueue('Repair?').then(value => { confirmationSettled = true; return value; });
+    for (let i = 0; i < 20 && !messageCalls; i++) await new Promise(resolve => setImmediate(resolve));
+    results.push({ name: 'Native repair confirmation waits for the message dialog response',
+      passed: messageCalls === 1 && !confirmationSettled });
+    releaseConfirm('Ok');
+    results.push({ name: 'Native Confirm authorizes repair', passed: await confirmation === true });
+    mockIPC(command => {
+      if (command === 'plugin:dialog|message') return 'Cancel';
+      throw new Error(`Unexpected confirmation command: ${command}`);
+    });
+    results.push({ name: 'Native Cancel never authorizes repair', passed: await confirmRepairQueue('Repair?') === false });
+    mockIPC(() => { throw new Error('dialog ACL denied'); });
+    let confirmationError = '';
+    try { await confirmRepairQueue('Repair?'); } catch (error) { confirmationError = String(error); }
+    results.push({ name: 'Native Dialog Error is propagated instead of affirmative approval',
+      passed: confirmationError.includes('dialog ACL denied') });
+
     let writes = 0;
     mockIPC((command) => {
       if (command === 'plugin:dialog|save') return null;

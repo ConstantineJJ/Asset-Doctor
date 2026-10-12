@@ -33,7 +33,7 @@ import { analyzeTransforms } from './analysis/TransformAnalyzer';
 import { analyzePerformance } from './analysis/PerformanceAnalyzer';
 import { analyzeNormalsAndUv } from './analysis/NormalsAndUvAnalyzer';
 import { inspectSkinInfluence } from './analysis/RigInspection';
-import { isDesktop, pickModelFiles, protectDesktopClose } from './platform/FileIO';
+import { confirmRepairQueue, isDesktop, pickModelFiles, protectDesktopClose } from './platform/FileIO';
 import { disposeModelResources } from './loaders/ModelResources';
 import type {
   AnimationClipInfo,
@@ -205,6 +205,7 @@ export function App() {
   // prevents a fast double-click from starting two queue runners against the
   // same SurgicalHealEngine preview/apply state.
   const repairQueueRunningRef = useRef(false);
+  const repairQueueConfirmingRef = useRef(false);
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -937,6 +938,7 @@ export function App() {
       !root ||
       !engine ||
       healBusyRef.current ||
+      repairQueueConfirmingRef.current ||
       repairQueueRunningRef.current ||
       repairQueueState.status === 'running'
     ) return;
@@ -953,11 +955,28 @@ export function App() {
       return;
     }
 
-    if (!window.confirm(t('heal.queue.confirm', { count: initialCandidates.length }))) return;
+    const analysisRevision = analysisRunIdRef.current;
+    const repairRevision = exportRequestRef.current;
+    repairQueueConfirmingRef.current = true;
+    let confirmed = false;
+    try {
+      confirmed = await confirmRepairQueue(t('heal.queue.confirm', { count: initialCandidates.length }));
+    } catch {
+      if (currentAssetRootRef.current === root && analysisRunIdRef.current === analysisRevision &&
+          exportRequestRef.current === repairRevision) {
+        setRepairQueueState({ status: 'failed', completed: 0, skipped: 0,
+          remaining: initialCandidates.length, stopReason: t('heal.queue.confirmFailed') });
+      }
+      return;
+    } finally {
+      repairQueueConfirmingRef.current = false;
+    }
 
-    // Re-check after the blocking confirmation dialog. Another click can enter
-    // the handler before React has painted the first "running" state.
-    if (repairQueueRunningRef.current || healBusyRef.current) return;
+    // A native dialog awaits asynchronously. Approval of an old asset/analysis
+    // must not authorize the current session, and two clicks must not open two dialogs.
+    if (confirmed !== true || currentAssetRootRef.current !== root ||
+        analysisRunIdRef.current !== analysisRevision || exportRequestRef.current !== repairRevision ||
+        repairQueueRunningRef.current || healBusyRef.current) return;
     repairQueueRunningRef.current = true;
     repairQueueStopRef.current = false;
 
