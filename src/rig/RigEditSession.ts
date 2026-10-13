@@ -34,6 +34,7 @@ export class RigEditSession {
   private past:RigSnapshot[]=[];
   private future:RigSnapshot[]=[];
   private signatures=new WeakMap<RigSnapshot,string>();
+  private gesture:{base:RigSnapshot;past:RigSnapshot[];future:RigSnapshot[];revision:number}|null=null;
   mode:RigMode='inspect';
   revision=0;
 
@@ -48,6 +49,7 @@ export class RigEditSession {
     this.baseline=this.authored;
   }
   get clips() { return this.authored.clips; }
+  get hasSkeleton() { return this.skeletons.size>0; }
   get canUndo() { return this.past.length>0; }
   get canRedo() { return this.future.length>0; }
   get hasEdits() { return this.signature(this.authored)!==this.signature(this.baseline); }
@@ -82,6 +84,27 @@ export class RigEditSession {
   restoreRest() { this.apply(this.authored); }
   enterEdit() { this.restoreRest(); this.mode='edit'; }
   enterPose() { this.restoreRest(); this.mode='pose'; }
+
+  beginGesture() {
+    if(this.gesture) throw new Error('A rig gesture is already active.');
+    this.gesture={base:this.authored,past:this.past.slice(),future:this.future.slice(),revision:this.revision};
+  }
+  previewJoint(uuid:string,change:JointChange,policy:ChildPolicy) {
+    if(!this.gesture) throw new Error('No rig gesture is active.');
+    const gesture=this.gesture;
+    this.authored=gesture.base; this.past=gesture.past.slice(); this.future=gesture.future.slice(); this.revision=gesture.revision;
+    this.restoreRest();
+    try {this.commitJoint(uuid,change,policy);} finally {this.past=gesture.past.slice();this.future=gesture.future.slice();this.revision=gesture.revision;}
+  }
+  finishGesture() {
+    if(!this.gesture) return;
+    const gesture=this.gesture; this.gesture=null;
+    if(this.signature(this.authored)!==this.signature(gesture.base)) {this.past.push(gesture.base);this.future=[];this.revision++;}
+  }
+  cancelGesture() {
+    if(!this.gesture) return;
+    const gesture=this.gesture;this.gesture=null;this.authored=gesture.base;this.past=gesture.past;this.future=gesture.future;this.revision=gesture.revision;this.restoreRest();
+  }
 
   private transaction(update:()=>void) {
     const live=this.capture(this.authored.clips,this.authored.tips), previous=this.authored;

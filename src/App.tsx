@@ -5,6 +5,9 @@ import { SceneTreePanel } from './components/SceneTreePanel';
 import { Viewport } from './components/Viewport';
 import { InspectorPanel } from './components/InspectorPanel';
 import { AnimationTimeline } from './components/AnimationTimeline';
+import { RigEditorPanel } from './components/RigEditorPanel';
+import type { RigEditSession,RigMode } from './rig/RigEditSession';
+import type { RigGizmoSettings } from './rig/RigGizmo';
 import { TopologyTestModal } from './components/TopologyTestModal';
 import { SceneManager } from './viewer/SceneManager';
 import { GLBLoaderService } from './loaders/GLBLoaderService';
@@ -79,6 +82,12 @@ export function App() {
   const exportBusyRef = useRef(false);
   const pickingFileRef = useRef(false);
   const unsavedRepairsRef = useRef(false);
+  const rigSessionRef=useRef<RigEditSession|null>(null);
+  const assetDetailsRef=useRef<{name:string;size?:number}>({name:''});
+  const [,setRigVersion]=useState(0);
+  const [rigError,setRigError]=useState<string|null>(null);
+  const [rigDragging,setRigDragging]=useState(false);
+  const [rigSettings,setRigSettings]=useState<RigGizmoSettings>({tool:'translate',space:'local',target:'joint',childPolicy:'follow'});
   const [savedExport, setSavedExport] = useState<RepairedExportResult | null>(null);
   if (!healEngineRef.current) {
     healEngineRef.current = new SurgicalHealEngine();
@@ -455,6 +464,7 @@ export function App() {
       exportSource?: ExportSourceDescriptor
     ) => {
       setIsLoading(true);
+      assetDetailsRef.current={name:assetName,size:sizeBytes};
       currentAssetRootRef.current = root;
       currentAnimationClipsRef.current = clips;
       currentExportSourceRef.current = exportSource ?? null;
@@ -487,6 +497,9 @@ export function App() {
       if (sceneManagerRef.current) {
         sceneManagerRef.current.setRootMotionVisible(false);
         sceneManagerRef.current.setAsset(root, clips);
+        rigSessionRef.current=sceneManagerRef.current.rigSession;
+        currentAnimationClipsRef.current=rigSessionRef.current?.clips??clips;
+        setRigError(null);setRigVersion(value=>value+1);
       }
 
       // Build hierarchy
@@ -513,10 +526,24 @@ export function App() {
   );
 
   // Mount an empty viewport. Built-in specimens remain available from Examples.
+  const publishRigChange=useCallback(()=>{
+    const session=rigSessionRef.current,root=currentAssetRootRef.current;
+    if(!session || !root) return;
+    currentAnimationClipsRef.current=session.clips;
+    exportRequestRef.current++;exportResultRef.current=null;exportServiceRef.current?.cancelActive();
+    setSavedExport(null);setExportReport(null);setExportError(null);
+    unsavedRepairsRef.current=session.hasEdits || (healEngineRef.current?.getActiveReports().length??0)>0;
+    setTreeRoot(buildSceneTree(root));setRigVersion(value=>value+1);
+    setAnimationClips(analyzeAnimations(session.clips,analyzeSkeleton(root).rootBoneNames));
+    void runAnalysisPipeline(root,session.clips,assetDetailsRef.current.name,assetDetailsRef.current.size);
+  },[runAnalysisPipeline]);
   const handleCanvasMount = useCallback(
     (container: HTMLElement) => {
       if (!sceneManagerRef.current) {
         const mgr = new SceneManager(container, {
+          onRigChanged:publishRigChange,
+          onRigError:setRigError,
+          onRigDrag:setRigDragging,
           onMeshSelected: (uuid) => {
             setSelectedUuid(uuid);
           },
@@ -1180,7 +1207,7 @@ export function App() {
     currentExportSourceRef.current
   );
   const hasUnsavedRepairs = Boolean(
-    activeRepairReports.length > 0 && (!savedExport || savedExport !== exportResultRef.current)
+    (activeRepairReports.length > 0 || rigSessionRef.current?.hasEdits) && (!savedExport || savedExport !== exportResultRef.current)
   );
   unsavedRepairsRef.current = hasUnsavedRepairs;
 
@@ -1258,7 +1285,7 @@ export function App() {
     let unlisten: (() => void) | undefined;
     void protectDesktopClose(
       () => unsavedRepairsRef.current,
-      language === 'ru' ? 'Есть несохранённые исправления. Закрыть окно и потерять их?' : 'There are unsaved repairs. Close the window and discard them?'
+      language === 'ru' ? 'Есть несохранённые изменения. Закрыть окно и потерять их?' : 'There are unsaved changes. Close the window and discard them?'
     ).then((cleanup) => {
       if (disposed) cleanup();
       else unlisten = cleanup;
@@ -1279,6 +1306,7 @@ export function App() {
   };
 
   const handleTogglePlayAnimation = () => {
+    if(rigSessionRef.current?.mode==='edit' || rigDragging) return;
     const next = !isPlayingAnimation;
     setIsPlayingAnimation(next);
     sceneManagerRef.current?.toggleAnimationPlay(next);
@@ -1291,6 +1319,7 @@ export function App() {
   };
 
   const handleSeekAnimation = (normalized: number) => {
+    if(rigSessionRef.current?.mode==='edit' || rigDragging) return;
     const clamped = Math.min(1, Math.max(0, normalized));
     setAnimationTime(clamped * animationDuration);
     sceneManagerRef.current?.seekAnimation(clamped);
@@ -1411,6 +1440,11 @@ export function App() {
 
         {/* Right: Technical Inspector & Diagnostic Panel */}
         <InspectorPanel
+          rigEditor={<RigEditorPanel session={rigSessionRef.current} selectedUuid={selectedUuid} settings={rigSettings} activeClipIndex={activeClipIndex} busy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} enabled={currentExportSourceRef.current?.kind==='buffer' && /\.glb$/i.test(fileName)} error={rigError}
+            onMode={(mode:RigMode)=>{setRigError(null);sceneManagerRef.current?.setRigMode(mode);setRigVersion(value=>value+1);if(mode!=='inspect')handleSetSkeletonVisible(true);}}
+            onSettings={settings=>{setRigSettings(settings);sceneManagerRef.current?.setRigGizmoSettings(settings);}}
+            onAction={action=>{const session=rigSessionRef.current;if(!session)return;setRigError(null);sceneManagerRef.current?.detachRigMixer();try{action(session);sceneManagerRef.current?.syncRigClips();publishRigChange();}catch(error){sceneManagerRef.current?.syncRigClips();setRigError(error instanceof Error?error.message:String(error));}}}
+          />}
           summary={summary}
           healthIssues={healthIssues}
           progressiveState={progressiveState}

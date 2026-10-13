@@ -280,5 +280,15 @@ export async function runRigEditTests(): Promise<TestResult[]> {
     session.restoreRest(); close(bone(root, 'Root').position.toArray(), [1.4, 2.2, 0]);
     session.reset(); assert.deepEqual(capture(root, session.clips), baseline); assert.equal(session.hasEdits, false);
   });
+  await test('A multi-frame gizmo gesture authors one history entry and cancellation restores exact state', (root,session) => {
+    session.enterEdit();const before=capture(root,session.clips),uuid=bone(root,'Root').uuid;
+    session.beginGesture();
+    for(const x of [1.1,1.2,1.3,1.4]) session.previewJoint(uuid,{position:[x,2,0]},'follow');
+    assert.equal(session.revision,0);assert.equal(session.canUndo,false);
+    session.finishGesture();assert.equal(session.revision,1);assert.equal(session.canUndo,true);
+    session.undo();assert.deepEqual(capture(root,session.clips),before);
+    session.beginGesture();session.previewJoint(uuid,{position:[1.8,2,0]},'follow');session.cancelGesture();
+    assert.deepEqual(capture(root,session.clips),before);assert.equal(session.revision,2);
+  });
   return results;
 }

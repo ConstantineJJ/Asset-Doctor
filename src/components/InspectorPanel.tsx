@@ -56,6 +56,7 @@ import { buildRepairQueueCandidates } from '../heal/RepairQueue';
 import { HealReportPanel } from './HealReportPanel';
 
 interface InspectorPanelProps {
+  rigEditor?:React.ReactNode;
   summary: AssetSummary | null;
   healthIssues: HealthIssue[];
   progressiveState: ProgressiveAnalysisState;
@@ -107,6 +108,7 @@ interface InspectorPanelProps {
 }
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
+  rigEditor,
   summary,
   healthIssues,
   progressiveState,
@@ -1250,7 +1252,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 onClick={onResetPreviewPose}
                 className="px-2 py-1 rounded border border-[#343944] bg-[#202329] text-gray-300 hover:text-white cursor-pointer text-[10px]"
               >
-                Reset Bind Pose
+                Return to Rest Pose
               </button>
               <button
                 disabled={selectedNode?.type !== 'SkinnedMesh'}
@@ -1262,6 +1264,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </div>
           </div>
 
+          {rigEditor}
           {selectedBoneInfo && (
             <div className="bg-[#1c1e24] border border-amber-900/60 rounded p-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">

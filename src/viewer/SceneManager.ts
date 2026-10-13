@@ -8,6 +8,8 @@ import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
 import type { HealthIssue, LightingConfig, LightingPreset, RenderMode, SurfaceType } from '../types';
 import { measureRootMotion } from '../analysis/AnimationAnalyzer';
 import { createPresentationWrapper, documentToViewer } from './AssetPresentation';
+import { RigEditSession, type RigMode } from '../rig/RigEditSession';
+import { RigGizmo, type RigGizmoSettings } from '../rig/RigGizmo';
 
 export interface SceneManagerCallbacks {
   onMeshSelected?: (uuid: string | null) => void;
@@ -15,6 +17,9 @@ export interface SceneManagerCallbacks {
   onAnimationPlaybackStateChange?: (playing: boolean) => void;
   onLightingChange?: (config: LightingConfig) => void;
   onModelRotationChange?: (degrees: number) => void;
+  onRigChanged?: () => void;
+  onRigError?: (message:string) => void;
+  onRigDrag?: (active:boolean) => void;
 }
 
 export class SceneManager {
@@ -37,6 +42,10 @@ export class SceneManager {
   private isPlayingAnimation: boolean = false;
   private animationSpeed: number = 1.0;
   private animationLoop: boolean = true;
+  public rigSession:RigEditSession|null=null;
+  private rigGizmo:RigGizmo;
+  private rigSettings:RigGizmoSettings={tool:'translate',space:'local',target:'joint',childPolicy:'follow'};
+  private activeClipIndex=0;
 
   // Model Rotation & Turntable
   private modelRotationY: number = 0;
@@ -134,6 +143,11 @@ export class SceneManager {
 
     this.initHelpers();
     this.bindEvents();
+    this.rigGizmo=new RigGizmo(this.scene,this.camera,this.renderer.domElement,{
+      drag:active=>{if(active && this.rigSession?.mode==='pose') this.detachRigMixer();this.cameraController.controls.enabled=!active;this.callbacks.onRigDrag?.(active);},
+      changed:()=>{this.syncRigClips();this.callbacks.onRigChanged?.();},
+      error:message=>this.callbacks.onRigError?.(message),
+    });
     this.startRenderLoop();
   }
 
@@ -284,6 +298,7 @@ export class SceneManager {
     // Viewport click selection & light bulb drag
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      if(this.rigGizmo?.active) return;
 
       const rect = this.renderer.domElement.getBoundingClientRect();
       this.mouseVector.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -352,6 +367,7 @@ export class SceneManager {
   }
 
   private handleViewportClick(e: PointerEvent) {
+    if(this.rigGizmo?.active) return;
     if (!this.currentAssetRoot) return;
 
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -418,6 +434,15 @@ export class SceneManager {
     this.currentAssetRoot.updateMatrixWorld(true);
     const pointer = new THREE.Vector2(e.clientX, e.clientY);
     const thresholdPx = 11;
+    // At a chain junction select the visible joint, rather than an incident link.
+    let nearestJoint:THREE.Bone|null=null, jointDistance=8;
+    for(const joint of this.inspectedBones) {
+      const projected=this.projectWorldToCanvas(joint.getWorldPosition(new THREE.Vector3()),rect);
+      if(!projected) continue;
+      const distance=pointer.distanceTo(projected.point);
+      if(distance<jointDistance) {nearestJoint=joint;jointDistance=distance;}
+    }
+    if(nearestJoint) return nearestJoint;
     let bestBone: THREE.Bone | null = null;
     let bestDistance = Number.POSITIVE_INFINITY;
     let bestDepth = Number.POSITIVE_INFINITY;
@@ -470,6 +495,7 @@ export class SceneManager {
     this.clearIssueLocalization();
 
     this.currentAssetRoot = assetRoot;
+    this.rigSession=new RigEditSession(assetRoot,clips);
     this.presentationWrapper = createPresentationWrapper(assetRoot);
     this.scene.add(this.presentationWrapper);
 
@@ -652,7 +678,7 @@ export class SceneManager {
     }
 
     // 5. Animations setup
-    this.animationClips = clips;
+    this.animationClips = this.rigSession.clips;
     if (clips.length > 0) {
       this.animationMixer = new THREE.AnimationMixer(assetRoot);
       this.animationMixer.addEventListener('finished', () => {
@@ -698,6 +724,7 @@ export class SceneManager {
   }
 
   public playAnimationClip(clipIndex: number): boolean {
+    if(this.rigSession?.mode==='edit') return false;
     if (
       !this.animationMixer ||
       !Number.isInteger(clipIndex) ||
@@ -710,6 +737,8 @@ export class SceneManager {
     if (this.activeAnimationAction) {
       this.activeAnimationAction.stop();
     }
+    this.rigSession?.restoreRest();
+    this.activeClipIndex=clipIndex;
 
     const clip = this.animationClips[clipIndex];
     const action = this.animationMixer.clipAction(clip);
@@ -733,7 +762,8 @@ export class SceneManager {
   }
 
   public toggleAnimationPlay(play?: boolean) {
-    if (!this.activeAnimationAction) return;
+    if(this.rigSession?.mode==='edit') return;
+    if (!this.activeAnimationAction) {if(play!==false) this.playAnimationClip(this.activeClipIndex);return;}
 
     const shouldPlay = play !== undefined ? play : !this.isPlayingAnimation;
     const duration = this.activeAnimationAction.getClip().duration;
@@ -763,16 +793,7 @@ export class SceneManager {
       this.animationMixer.setTime(0);
     }
 
-    // Stop means "return to the authored rest/bind pose", not merely freeze at t=0.
-    const posedSkeletons = new Set<THREE.Skeleton>();
-    this.currentAssetRoot?.traverse((object) => {
-      if (!(object as THREE.SkinnedMesh).isSkinnedMesh) return;
-      const skeleton = (object as THREE.SkinnedMesh).skeleton;
-      if (!skeleton || posedSkeletons.has(skeleton)) return;
-      skeleton.pose();
-      skeleton.update();
-      posedSkeletons.add(skeleton);
-    });
+    this.rigSession?.restoreRest();
     this.currentAssetRoot?.updateMatrixWorld(true);
 
     this.callbacks.onAnimationTimeUpdate?.(0, duration);
@@ -780,6 +801,7 @@ export class SceneManager {
   }
 
   public seekAnimation(normalizedTime: number) {
+    if(this.rigSession?.mode==='edit') return;
     if (!this.activeAnimationAction || !this.animationMixer) return;
     const duration = this.activeAnimationAction.getClip().duration;
     const targetTime = THREE.MathUtils.clamp(normalizedTime, 0, 1) * duration;
@@ -798,6 +820,7 @@ export class SceneManager {
   }
 
   public stepAnimationFrame(stepSeconds: number = 1 / 30) {
+    if(this.rigSession?.mode==='edit') return;
     if (!this.activeAnimationAction || !this.animationMixer) return;
     this.isPlayingAnimation = false;
     const duration = this.activeAnimationAction.getClip().duration;
@@ -1022,6 +1045,7 @@ export class SceneManager {
     if (this.callbacks.onMeshSelected) {
       this.callbacks.onMeshSelected(uuid);
     }
+    this.rigGizmo.configure(this.rigSession,uuid,this.rigSettings);
   }
 
   private getAssetDiagonal(): number {
@@ -1589,17 +1613,36 @@ export class SceneManager {
       this.animationMixer.setTime(0);
     }
 
-    const posedSkeletons = new Set<THREE.Skeleton>();
-    this.currentAssetRoot.traverse((object) => {
-      if (!(object as THREE.SkinnedMesh).isSkinnedMesh) return;
-      const mesh = object as THREE.SkinnedMesh;
-      if (!mesh.skeleton || posedSkeletons.has(mesh.skeleton)) return;
-      mesh.skeleton.pose();
-      mesh.skeleton.update();
-      posedSkeletons.add(mesh.skeleton);
-    });
+    this.rigSession?.restoreRest();
     this.currentAssetRoot.updateMatrixWorld(true);
     this.callbacks.onAnimationTimeUpdate?.(0, duration);
+    this.rigGizmo.refresh();
+  }
+
+  /** Stop cached bindings before authored mutation; rebuild them from the new rest. */
+  public detachRigMixer() {
+    this.isPlayingAnimation=false;
+    this.animationMixer?.stopAllAction();
+    if(this.currentAssetRoot) this.animationMixer?.uncacheRoot(this.currentAssetRoot);
+    this.animationMixer=null;this.activeAnimationAction=null;
+    this.rigSession?.restoreRest();
+    this.callbacks.onAnimationPlaybackStateChange?.(false);
+  }
+  public syncRigClips() {
+    if(!this.rigSession || !this.currentAssetRoot) return;
+    this.animationClips=this.rigSession.clips;
+    if(!this.animationMixer && this.rigSession.mode!=='edit') this.animationMixer=new THREE.AnimationMixer(this.currentAssetRoot);
+    this.callbacks.onAnimationTimeUpdate?.(0,this.animationClips[this.activeClipIndex]?.duration??0);
+    this.rigGizmo.configure(this.rigSession,this.selectedMeshUuid,this.rigSettings);
+  }
+  public setRigMode(mode:RigMode) {
+    this.detachRigMixer();
+    if(!this.rigSession) return;
+    if(mode==='edit') this.rigSession.enterEdit();else if(mode==='pose') this.rigSession.enterPose();else this.rigSession.mode='inspect';
+    this.syncRigClips();
+  }
+  public setRigGizmoSettings(settings:RigGizmoSettings) {
+    this.rigSettings=settings;this.rigGizmo.configure(this.rigSession,this.selectedMeshUuid,settings);
   }
 
   public toggleOrigin(visible?: boolean) {
@@ -1728,6 +1771,8 @@ export class SceneManager {
   }
 
   public disposeCurrentAsset() {
+    this.rigGizmo?.configure(null,null,this.rigSettings);
+    this.rigSession=null;
     this.clearIssueLocalization();
     this.issueReturnView = null;
     if (!this.currentAssetRoot) return;
@@ -1825,6 +1870,7 @@ export class SceneManager {
     this.orientationWidget = null;
     this.orientationAxes = null;
     this.cameraController.dispose();
+    this.rigGizmo.dispose();
     this.lightingManager.dispose();
     this.surfaceManager.dispose();
     this.renderModeManager.dispose();
