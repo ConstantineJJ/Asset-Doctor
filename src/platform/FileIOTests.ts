@@ -41,6 +41,18 @@ export async function runFileIOTests() {
     const cancelled = await saveBinaryFile('repaired.glb', new Uint8Array([1, 2, 3]).buffer);
     results.push({ name: 'Native save cancellation leaves the repaired copy unsaved', passed: cancelled === false && writes === 0 });
 
+    let releaseSave!:(path:string)=>void;
+    let dialogOpened=false, current=true;
+    const saveBarrier=new Promise<string>(resolve=>{releaseSave=resolve;});
+    mockIPC(command=>{
+      if(command==='plugin:dialog|save') {dialogOpened=true;return saveBarrier;}
+      if(command==='plugin:fs|write_file') writes++;
+    });
+    const staleSave=saveBinaryFile('edited.glb',new ArrayBuffer(4),()=>current);
+    for(let i=0;i<20&&!dialogOpened;i++) await new Promise(resolve=>setImmediate(resolve));
+    current=false; releaseSave('C:\\Models\\edited.glb');
+    results.push({name:'Native save refuses stale bytes before filesystem writing after dialog invalidation',passed:await staleSave===false&&writes===0});
+
     let completeWrite!: () => void;
     const writeBarrier = new Promise<void>((resolve) => { completeWrite = resolve; });
     let written: Uint8Array | undefined;

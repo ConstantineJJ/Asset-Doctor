@@ -34,7 +34,7 @@ export async function pickModelFiles(multiple = false): Promise<File[]> {
 }
 
 /** True means a completed write; cancellation and unconfirmed browser downloads return false. */
-export async function saveBinaryFile(fileName: string, buffer: ArrayBuffer): Promise<boolean> {
+export async function saveBinaryFile(fileName: string, buffer: ArrayBuffer, stillCurrent:()=>boolean=()=>true): Promise<boolean> {
   if (isTauri()) {
     const [{ save }, { writeFile }] = await Promise.all([
       import('@tauri-apps/plugin-dialog'),
@@ -44,11 +44,12 @@ export async function saveBinaryFile(fileName: string, buffer: ArrayBuffer): Pro
       defaultPath: fileName,
       filters: [{ name: 'Binary glTF', extensions: ['glb'] }],
     });
-    if (path === null) return false;
+    if (path === null || !stillCurrent()) return false;
     await writeFile(path, new Uint8Array(buffer));
     return true;
   }
 
+  if(!stillCurrent()) return false;
   const url = URL.createObjectURL(new Blob([buffer], { type: 'model/gltf-binary' }));
   const anchor = document.createElement('a');
   anchor.href = url;

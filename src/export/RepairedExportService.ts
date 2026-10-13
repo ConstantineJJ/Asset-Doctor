@@ -441,8 +441,8 @@ export class RepairedExportService {
     }
   }
 
-  public download(result: RepairedExportResult): Promise<boolean> {
-    return saveBinaryFile(result.fileName, result.buffer);
+  public download(result: RepairedExportResult,stillCurrent:()=>boolean=()=>true): Promise<boolean> {
+    return saveBinaryFile(result.fileName, result.buffer,stillCurrent);
   }
 
   private async createFreshAsset(source: ExportSourceDescriptor): Promise<FreshAsset> {
