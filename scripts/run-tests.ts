@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { runSyntheticTopologyTests } from '../src/analysis/SyntheticTopologyTests';
+import { runRigEditTests } from '../src/rig/RigEditTests';
 import { runFileIOTests } from '../src/platform/FileIOTests';
 import { runDiagnosticCoreTests } from '../src/analysis/DiagnosticCoreTests';
 import { runDiagnosticCoverageTests } from '../src/analysis/DiagnosticCoverageTests';
@@ -19,6 +20,7 @@ import {
 
 async function main() {
   const results = [
+    ...(await runRigEditTests()),
     ...(await runFileIOTests()),
     ...runSyntheticTopologyTests(),
     ...runDiagnosticCoreTests(),
