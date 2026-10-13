@@ -1134,7 +1134,7 @@ export function App() {
     setExportBusy(true);
     setExportError(null);
     try {
-      const saved = await service.download(result);
+      const saved = await service.download(result,()=>exportResultRef.current===result);
       // A save dialog can stay open while Undo or another asset invalidates it.
       if (!saved || exportResultRef.current !== result) return false;
       unsavedRepairsRef.current = false;
