@@ -1,0 +1,50 @@
+import {test,expect} from '@playwright/test';
+import {rigFixture} from '../rig-fixtures';
+import {metadataFixture} from './runtime-metadata-fixture';
+import {rigViewerState} from './rig-runtime-probe';
+import {metadataState} from './runtime-metadata-probe';
+
+for(const textured of [false,true])test(`Rig worker export and actual reimport preserve ${textured?'textured legacy extras':'shared cubic channels'} without runtime data`,async({page})=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));await page.goto('/');
+ const source=textured?metadataFixture(true):Buffer.from(rigFixture({morphWeights:true}).buffer);
+ await page.locator('header input[type=file]').setInputFiles({name:'rig-source.glb',mimeType:'model/gltf-binary',buffer:source});
+ await expect(page.getByRole('button',{name:'Rescan',exact:true})).toBeEnabled();
+ const materials=textured?(await metadataState(page))?.[0].meshes[0].materials:null;
+ await page.getByRole('button',{name:'Rig',exact:true}).click();await page.getByTestId('rig-mode-edit').click();
+ const initial=await rigViewerState(page),joint=textured?initial.bones[0]:initial.bones.find(bone=>bone.name==='Root')!;
+ await page.mouse.click(...joint.screen as [number,number]);
+ await expect.poll(async()=>(await rigViewerState(page)).selected).toBe(joint.uuid);
+ const editedX=joint.position[0]+.25;
+ await page.getByLabel('Joint position X',{exact:true}).fill(String(editedX));await page.getByRole('button',{name:'Apply Position',exact:true}).click();
+ await page.getByLabel('Export clip duration').fill('8');await page.getByRole('button',{name:'Retime Selected Clip',exact:true}).click();
+ await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();
+ await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED',{timeout:30000});
+ const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Edited GLB',exact:true}).click()]);
+ const stream=await download.createReadStream(),chunks:Buffer[]=[];for await(const chunk of stream!)chunks.push(Buffer.from(chunk));const buffer=Buffer.concat(chunks);
+ await test.info().attach('rig-edited.glb',{body:buffer,contentType:'model/gltf-binary'});
+ const json=JSON.parse(buffer.subarray(20,20+buffer.readUInt32LE(12)).toString().trim()),original=JSON.parse(source.subarray(20,20+source.readUInt32LE(12)).toString().trim());
+ expect(JSON.stringify(json)).not.toContain('__assetDoctorSourceAudit');expect(JSON.stringify(json)).not.toContain('__assetDoctorAuthoredMaterials');expect(JSON.stringify(json)).not.toContain('data:image');
+ expect(json.skins[0].joints).toEqual(original.skins[0].joints);expect(json.skins[0].skeleton).toEqual(original.skins[0].skeleton);
+ expect(json.materials).toEqual(original.materials);expect(json.textures).toEqual(original.textures);
+ await page.locator('header input[type=file]').setInputFiles({name:'rig-reopened.glb',mimeType:'model/gltf-binary',buffer});await page.getByRole('button',{name:'Discard and open',exact:true}).click();
+ await expect(page.getByText('rig-reopened.glb',{exact:true})).toBeVisible();
+ const reopened=await rigViewerState(page,true);
+ expect(reopened.bones.find(bone=>bone.name===joint.name)?.position[0]).toBeCloseTo(editedX,6);expect(reopened.durations?.[0]).toBe(8);
+ if(textured)expect((await metadataState(page))?.[0].meshes[0].materials).toEqual(materials);
+ expect(errors).toEqual([]);
+});
+
+test('Combined index Repair and rig export preserves raw non-unit source weights and permits independent Undo',async({page})=>{
+ page.on('dialog',dialog=>dialog.accept());const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));await page.goto('/');
+ const source=metadataFixture(),jsonLength=source.readUInt32LE(12),document=JSON.parse(source.subarray(20,20+jsonLength).toString().trim());
+ const accessor=document.accessors[document.meshes[0].primitives[0].attributes.WEIGHTS_0],view=document.bufferViews[accessor.bufferView];expect(accessor.componentType).toBe(5126);
+ const offset=28+jsonLength+(view.byteOffset??0)+(accessor.byteOffset??0);
+ for(let i=0;i<accessor.count*4;i++)source.writeFloatLE(source.readFloatLE(offset+i*4)*2,offset+i*4);
+ await page.locator('header input[type=file]').setInputFiles({name:'combined.glb',mimeType:'model/gltf-binary',buffer:source});await expect(page.getByRole('button',{name:'Run safe queue',exact:true})).toBeEnabled();await page.getByRole('button',{name:'Run safe queue',exact:true}).click();await expect(page.getByRole('button',{name:'Build & Verify',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Rig',exact:true}).click();await page.getByTestId('rig-mode-edit').click();const initial=await rigViewerState(page),joint=initial.bones[0];await page.mouse.click(...joint.screen as [number,number]);await page.getByLabel('Joint position X',{exact:true}).fill(String(joint.position[0]+.2));await page.getByRole('button',{name:'Apply Position',exact:true}).click();
+ await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED');
+ const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Edited GLB',exact:true}).click()]);const stream=await download.createReadStream(),chunks:Buffer[]=[];for await(const chunk of stream!)chunks.push(Buffer.from(chunk));const output=Buffer.concat(chunks),outputLength=output.readUInt32LE(12),exported=JSON.parse(output.subarray(20,20+outputLength).toString().trim());
+ const binLength=source.readUInt32LE(20+jsonLength);expect(output.subarray(28+outputLength,28+outputLength+binLength)).toEqual(source.subarray(28+jsonLength,28+jsonLength+binLength));expect(exported.meshes[0].primitives[0].attributes.WEIGHTS_0).toBe(document.meshes[0].primitives[0].attributes.WEIGHTS_0);
+ await page.getByRole('button',{name:'Undo',exact:true}).click();expect((await rigViewerState(page)).bones.find(bone=>bone.uuid===joint.uuid)?.position).toEqual(joint.position);await expect(page.locator('header')).toContainText('2 tri');
+ await page.getByRole('button',{name:'Health',exact:true}).click();await page.getByRole('button',{name:/^Undo ·/}).click();await expect(page.locator('header')).toContainText('3 tri');expect(errors).toEqual([]);
+});

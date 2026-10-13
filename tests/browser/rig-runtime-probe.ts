@@ -39,7 +39,8 @@ export async function rigViewerState(page:Page,stop=false) {
      xray:viewer.skeletonHelper?.material.depthTest===false,jointCount:viewer.skeletonJoints?.count ?? 0,
      jointsVisible:viewer.skeletonJoints?.visible ?? false,
      mode:viewer.rigSession?.mode,revision:viewer.rigSession?.revision,hasEdits:viewer.rigSession?.hasEdits,
-     durations:viewer.rigSession?.clips.map((clip:any)=>clip.duration),handles};
+     durations:viewer.rigSession?.clips.map((clip:any)=>clip.duration),handles,gizmoEnabled:gizmo?.enabled,
+     gizmoOrigin:gizmo?.object?.position.toArray(),selectedWorld:viewer.currentAssetRoot.getObjectByProperty('uuid',viewer.selectedMeshUuid??'')?.getWorldPosition(viewer.camera.position.clone()).toArray()};
    }
   }
   throw new Error('Viewer not found');

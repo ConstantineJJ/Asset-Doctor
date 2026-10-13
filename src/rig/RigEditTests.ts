@@ -290,5 +290,10 @@ export async function runRigEditTests(): Promise<TestResult[]> {
     session.beginGesture();session.previewJoint(uuid,{position:[1.8,2,0]},'follow');session.cancelGesture();
     assert.deepEqual(capture(root,session.clips),before);assert.equal(session.revision,2);
   });
+  await test('Length changes honor Hold for the selected child joint descendants', (root,session)=>{
+    session.enterEdit();root.updateMatrixWorld(true);const leaf=bone(root,'Leaf'),world=leaf.matrixWorld.toArray();
+    session.setBoneLength(bone(root,'Root').uuid,bone(root,'Child').uuid,3.5,'hold');root.updateMatrixWorld(true);
+    close(leaf.matrixWorld.toArray(),world);close(bone(root,'Child').position.toArray(),[0,3.5,0]);
+  });
   return results;
 }

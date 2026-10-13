@@ -36,7 +36,9 @@ export class RigGizmo {
         try {this.commitLeaf();} catch(error) {this.callbacks.error(error instanceof Error?error.message:String(error));}
       }
       if(this.session?.mode==='edit') this.session.finishGesture();
-      this.callbacks.drag(false); this.refresh(); this.callbacks.changed();
+      this.callbacks.drag(false);
+      // TransformControls clears dragging after dispatching mouseUp.
+      queueMicrotask(()=>{this.refresh();this.callbacks.changed();});
     });
   }
   get active() {return this.controls.enabled && !!this.controls.object && (this.controls.dragging || this.controls.axis!==null);}
@@ -92,7 +94,18 @@ export class RigGizmo {
   }
   commitLeaf() {
     if(!this.leaf || !this.session || this.failure) return;
+    if(Math.abs(this.leaf.matrixWorld.determinant())<1e-10)throw new Error('Singular terminal-guide transform.');
     this.session.setTerminalTip(this.leaf.uuid,this.proxy.position.clone().applyMatrix4(this.leaf.matrixWorld.clone().invert()).toArray());
+  }
+  update() {
+    if(this.controls.dragging || !this.controls.object || !this.target)return;
+    this.target.getWorldPosition(this.proxy.position);this.target.getWorldQuaternion(this.proxy.quaternion);
+    if(this.leaf&&this.session){
+      const start=this.proxy.position.clone();
+      this.proxy.position.copy(new THREE.Vector3().fromArray(this.session.getTerminalTip(this.leaf.uuid)??[0,.2,0]).applyMatrix4(this.leaf.matrixWorld));
+      const position=this.guide.geometry.getAttribute('position');position.setXYZ(0,start.x,start.y,start.z);position.setXYZ(1,this.proxy.position.x,this.proxy.position.y,this.proxy.position.z);position.needsUpdate=true;this.guide.geometry.computeBoundingSphere();
+    }
+    this.proxy.updateMatrixWorld(true);
   }
   dispose() {
     this.session?.cancelGesture(); this.controls.getHelper().removeFromParent();this.controls.dispose();this.proxy.removeFromParent();this.guide.removeFromParent();this.guide.geometry.dispose();(this.guide.material as THREE.Material).dispose();

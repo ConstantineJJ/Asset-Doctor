@@ -43,12 +43,12 @@ export function unpackGeometry(packet:GeometryPacket):THREE.BufferGeometry {
 
 interface NodePacket {uuid:string;name:string;type:'bone'|'mesh'|'skin'|'node';matrix:number[];visible:boolean;geometry?:GeometryPacket;instanced?:boolean;
  children:NodePacket[];bones?:string[];inverses?:number[][];bind?:number[];bindInverse?:number[];bindMode?:THREE.BindMode;morphInfluences?:number[];morphDictionary?:Record<string,number>}
-export function packRoot(root:THREE.Object3D):NodePacket {
+export function packRoot(root:THREE.Object3D,geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry):NodePacket {
  const geometries=new Map<THREE.BufferGeometry,GeometryPacket>();root.updateWorldMatrix(true,true);
  const pack=(node:THREE.Object3D):NodePacket=>{
   const mesh=node as THREE.SkinnedMesh;
   let geometry:GeometryPacket|undefined;
-  if(mesh.isMesh){geometry=geometries.get(mesh.geometry);if(!geometry){geometry=packGeometry(mesh.geometry);geometries.set(mesh.geometry,geometry);}}
+  if(mesh.isMesh){const source=geometrySource(mesh);geometry=geometries.get(source);if(!geometry){geometry=packGeometry(source);geometries.set(source,geometry);}}
   return {uuid:node.uuid,name:node.name,type:mesh.isSkinnedMesh?'skin':mesh.isMesh?'mesh':(node as THREE.Bone).isBone?'bone':'node',
    matrix:node.matrix.toArray(),visible:node.visible,geometry,instanced:(node as THREE.InstancedMesh).isInstancedMesh,children:node.children.map(pack),
    bones:mesh.isSkinnedMesh?mesh.skeleton.bones.map(bone=>bone.uuid):undefined,inverses:mesh.isSkinnedMesh?mesh.skeleton.boneInverses.map(m=>m.toArray()):undefined,

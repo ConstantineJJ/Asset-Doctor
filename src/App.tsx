@@ -8,6 +8,8 @@ import { AnimationTimeline } from './components/AnimationTimeline';
 import { RigEditorPanel } from './components/RigEditorPanel';
 import type { RigEditSession,RigMode } from './rig/RigEditSession';
 import type { RigGizmoSettings } from './rig/RigGizmo';
+import { RigExportService,type RigExportResult } from './rig/RigExportService';
+import { buildRigExportPacket } from './rig/RigGlbPatch';
 import { TopologyTestModal } from './components/TopologyTestModal';
 import { SceneManager } from './viewer/SceneManager';
 import { GLBLoaderService } from './loaders/GLBLoaderService';
@@ -36,7 +38,7 @@ import { analyzeTransforms } from './analysis/TransformAnalyzer';
 import { analyzePerformance } from './analysis/PerformanceAnalyzer';
 import { analyzeNormalsAndUv } from './analysis/NormalsAndUvAnalyzer';
 import { inspectSkinInfluence } from './analysis/RigInspection';
-import { confirmRepairQueue, isDesktop, pickModelFiles, protectDesktopClose } from './platform/FileIO';
+import { confirmRepairQueue, isDesktop, pickModelFiles, protectDesktopClose,saveBinaryFile } from './platform/FileIO';
 import { disposeModelResources } from './loaders/ModelResources';
 import type {
   AnimationClipInfo,
@@ -83,6 +85,12 @@ export function App() {
   const pickingFileRef = useRef(false);
   const unsavedRepairsRef = useRef(false);
   const rigSessionRef=useRef<RigEditSession|null>(null);
+  const rigPublishedRevisionRef=useRef(0);
+  const rigExportServiceRef=useRef<RigExportService|null>(null);
+  if(!rigExportServiceRef.current)rigExportServiceRef.current=new RigExportService();
+  const rigExportResultRef=useRef<RigExportResult|null>(null);
+  const [rigExportResult,setRigExportResult]=useState<RigExportResult|null>(null);
+  const [savedRigExport,setSavedRigExport]=useState<RigExportResult|null>(null);
   const assetDetailsRef=useRef<{name:string;size?:number}>({name:''});
   const [,setRigVersion]=useState(0);
   const [rigError,setRigError]=useState<string|null>(null);
@@ -230,6 +238,7 @@ export function App() {
       workerManagerRef.current = null;
       healEngineRef.current?.clear();
       exportServiceRef.current?.cancelActive();
+      rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;
     };
   }, []);
 
@@ -360,6 +369,8 @@ export function App() {
       const skel = analyzeSkeleton(root);
       setSkinningStats(skel);
       const anims = analyzeAnimations(clips, skel.rootBoneNames);
+      geomSummary.clipCount=clips.length;
+      geomSummary.clips=anims;
       const integrity = analyzeIntegrity(root);
       // Keep each complete diagnostic pass, but give the desktop event loop a
       // turn between buffer scans. A replacement asset invalidates this run.
@@ -476,6 +487,7 @@ export function App() {
       setExportError(null);
       healEngineRef.current?.clear();
       exportServiceRef.current?.cancelActive();
+      rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;setRigExportResult(null);setSavedRigExport(null);
       setActiveRepairReports([]);
       repairQueueStopRef.current = true;
       repairQueueRunningRef.current = false;
@@ -498,6 +510,7 @@ export function App() {
         sceneManagerRef.current.setRootMotionVisible(false);
         sceneManagerRef.current.setAsset(root, clips);
         rigSessionRef.current=sceneManagerRef.current.rigSession;
+        rigPublishedRevisionRef.current=rigSessionRef.current?.revision??0;
         currentAnimationClipsRef.current=rigSessionRef.current?.clips??clips;
         setRigError(null);setRigVersion(value=>value+1);
       }
@@ -529,11 +542,14 @@ export function App() {
   const publishRigChange=useCallback(()=>{
     const session=rigSessionRef.current,root=currentAssetRootRef.current;
     if(!session || !root) return;
+    setTreeRoot(buildSceneTree(root));setRigVersion(value=>value+1);
+    if(rigPublishedRevisionRef.current===session.revision)return;
+    rigPublishedRevisionRef.current=session.revision;
     currentAnimationClipsRef.current=session.clips;
     exportRequestRef.current++;exportResultRef.current=null;exportServiceRef.current?.cancelActive();
     setSavedExport(null);setExportReport(null);setExportError(null);
+    rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;setRigExportResult(null);setSavedRigExport(null);
     unsavedRepairsRef.current=session.hasEdits || (healEngineRef.current?.getActiveReports().length??0)>0;
-    setTreeRoot(buildSceneTree(root));setRigVersion(value=>value+1);
     setAnimationClips(analyzeAnimations(session.clips,analyzeSkeleton(root).rootBoneNames));
     void runAnalysisPipeline(root,session.clips,assetDetailsRef.current.name,assetDetailsRef.current.size);
   },[runAnalysisPipeline]);
@@ -878,6 +894,7 @@ export function App() {
     setHealError(null);
     exportResultRef.current = null;
     exportServiceRef.current?.cancelActive();
+    rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;setRigExportResult(null);setSavedRigExport(null);
     exportRequestRef.current++;
     setSavedExport(null);
     setExportReport(null);
@@ -1103,6 +1120,7 @@ export function App() {
 
   // Export Repaired Copy v0.1
   const handleBuildRepairedExport = async (): Promise<RepairedExportResult | null> => {
+    if(rigSessionRef.current?.hasEdits) {await handleRigExport(false);return null;}
     const root = currentAssetRootRef.current;
     const source = currentExportSourceRef.current;
     const engine = healEngineRef.current;
@@ -1183,6 +1201,7 @@ export function App() {
   };
 
   const handleToolbarExport = async () => {
+    if(rigSessionRef.current?.hasEdits) {await handleRigExport(true);return;}
     const service = exportServiceRef.current;
     if (!service || exportBusy) return;
 
@@ -1198,7 +1217,33 @@ export function App() {
     }
   };
 
+  const handleRigExport=async(save:boolean):Promise<boolean>=>{
+    const session=rigSessionRef.current,source=currentExportSourceRef.current,root=currentAssetRootRef.current;
+    if(!session || !root || source?.kind!=='buffer' || exportBusyRef.current || healBusyRef.current || repairQueueRunningRef.current || rigDragging)return false;
+    exportBusyRef.current=true;setExportBusy(true);setRigError(null);
+    const request=++exportRequestRef.current,revision=session.revision;
+    const current=()=>request===exportRequestRef.current && root===currentAssetRootRef.current && session===rigSessionRef.current && session.revision===revision;
+    try {
+      const engine=healEngineRef.current!,reports=engine.getActiveReports();
+      if(reports.length&&!engine.validateCurrentVerifiedSession(root).ok)throw new Error('Repair session is no longer verified.');
+      let result=rigExportResultRef.current;
+      if(result&&!result.stillCurrent())result=null;
+      if(!result || result.revision!==revision) {
+        result=await rigExportServiceRef.current!.export(session,source.buffer,fileName,reports,mesh=>sceneManagerRef.current!.renderModeManager.authoredGeometry(mesh));
+        if(!current())return false;
+        rigExportResultRef.current=result;setRigExportResult(result);
+      }
+      if(result.verification.status!=='VERIFIED') {setRigError(result.verification.reasons.join('; '));return false;}
+      if(!save)return true;
+      if(!(await saveBinaryFile(result.fileName,result.buffer,()=>current()&&rigExportResultRef.current===result&&result!.stillCurrent())))return false;
+      if(!current())return false;
+      setSavedRigExport(result);unsavedRepairsRef.current=false;return true;
+    } catch(error) {if(current())setRigError(error instanceof Error?error.message:String(error));return false;}
+    finally {exportBusyRef.current=false;setExportBusy(false);}
+  };
+
   const canExportRepaired = Boolean(
+    !rigSessionRef.current?.hasEdits &&
     !healBusy && repairQueueState.status !== 'running' &&
     activeRepairReports.length > 0 &&
     activeRepairReports.every(
@@ -1207,9 +1252,12 @@ export function App() {
     currentExportSourceRef.current
   );
   const hasUnsavedRepairs = Boolean(
-    (activeRepairReports.length > 0 || rigSessionRef.current?.hasEdits) && (!savedExport || savedExport !== exportResultRef.current)
+    (activeRepairReports.length > 0 || rigSessionRef.current?.hasEdits) &&
+    (!savedExport || savedExport !== exportResultRef.current) &&
+    (!savedRigExport || savedRigExport!==rigExportResultRef.current)
   );
   unsavedRepairsRef.current = hasUnsavedRepairs;
+  useEffect(()=>{sceneManagerRef.current?.setRigInteractionBlocked(healBusy||exportBusy||repairQueueState.status==='running');},[healBusy,exportBusy,repairQueueState.status]);
 
   const runAssetSwitch = async (pending: PendingAssetSwitch) => {
     if (pending.kind === 'file') await openFileNow(pending.file);
@@ -1259,7 +1307,11 @@ export function App() {
   const handleExportAndSwitch = async () => {
     const pending = pendingAssetSwitch;
     const service = exportServiceRef.current;
-    if (!pending || !service || !canExportRepaired || exportBusy) return;
+    if (!pending || !service || !(canExportRepaired||rigSessionRef.current?.hasEdits) || exportBusy) return;
+    if(rigSessionRef.current?.hasEdits) {
+      if(!await handleRigExport(true))return;
+      setPendingAssetSwitch(null);await runAssetSwitch(pending);return;
+    }
 
     const result = await handleBuildRepairedExport();
     if (!result || result.report.status !== 'VERIFIED') return;
@@ -1373,7 +1425,7 @@ export function App() {
         onPickFile={isDesktop() ? handlePickFile : undefined}
         onOpenFile={requestOpenFile}
         onExport={handleToolbarExport}
-        canExport={canExportRepaired}
+        canExport={canExportRepaired || Boolean(rigSessionRef.current?.hasEdits&&!rigDragging&&!healBusy&&repairQueueState.status!=='running')}
         exportBusy={exportBusy}
         onSelectSample={requestSelectSample}
         renderMode={renderMode}
@@ -1440,8 +1492,16 @@ export function App() {
 
         {/* Right: Technical Inspector & Diagnostic Panel */}
         <InspectorPanel
-          rigEditor={<RigEditorPanel session={rigSessionRef.current} selectedUuid={selectedUuid} settings={rigSettings} activeClipIndex={activeClipIndex} busy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} enabled={currentExportSourceRef.current?.kind==='buffer' && /\.glb$/i.test(fileName)} error={rigError}
-            onMode={(mode:RigMode)=>{setRigError(null);sceneManagerRef.current?.setRigMode(mode);setRigVersion(value=>value+1);if(mode!=='inspect')handleSetSkeletonVisible(true);}}
+          rigEditor={<RigEditorPanel session={rigSessionRef.current} selectedUuid={selectedUuid} settings={rigSettings} activeClipIndex={activeClipIndex} busy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} enabled={currentExportSourceRef.current?.kind==='buffer' && /\.glb$/i.test(fileName)} error={rigError} exportResult={rigExportResult} onVerifyExport={()=>void handleRigExport(false)} onSaveExport={()=>void handleRigExport(true)}
+            onPreview={(uuid,quaternion)=>{setRigError(null);try{sceneManagerRef.current?.previewRigRotation(uuid,quaternion);}catch(error){setRigError(error instanceof Error?error.message:String(error));}}}
+            onMode={(mode:RigMode)=>{
+              setRigError(null);
+              try {
+                const source=currentExportSourceRef.current,session=rigSessionRef.current;
+                if(mode==='edit'&&session&&source?.kind==='buffer')buildRigExportPacket(session,source.buffer,healEngineRef.current?.getActiveReports(),mesh=>sceneManagerRef.current!.renderModeManager.authoredGeometry(mesh));
+                sceneManagerRef.current?.setRigMode(mode);setRigVersion(value=>value+1);if(mode!=='inspect')handleSetSkeletonVisible(true);
+              }catch(error){setRigError(error instanceof Error?error.message:String(error));}
+            }}
             onSettings={settings=>{setRigSettings(settings);sceneManagerRef.current?.setRigGizmoSettings(settings);}}
             onAction={action=>{const session=rigSessionRef.current;if(!session)return;setRigError(null);sceneManagerRef.current?.detachRigMixer();try{action(session);sceneManagerRef.current?.syncRigClips();publishRigChange();}catch(error){sceneManagerRef.current?.syncRigClips();setRigError(error instanceof Error?error.message:String(error));}}}
           />}
@@ -1557,7 +1617,7 @@ export function App() {
               </button>
               <button
                 onClick={() => { void handleExportAndSwitch(); }}
-                disabled={!canExportRepaired || exportBusy}
+                disabled={!(canExportRepaired||rigSessionRef.current?.hasEdits) || exportBusy}
                 className="rounded border border-cyan-700 bg-cyan-950/45 px-3 py-2 text-xs font-medium text-cyan-100 hover:bg-cyan-950/65 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {exportBusy

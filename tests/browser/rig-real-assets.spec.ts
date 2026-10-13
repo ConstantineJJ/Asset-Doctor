@@ -1,0 +1,32 @@
+import {test,expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
+import {rigViewerState} from './rig-runtime-probe';
+
+for(const name of ['RiggedSimple','Fox'])test(`Khronos ${name}: joint orientation, clip retiming, smooth display and edited GLB reimport`,async({page})=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));await page.goto('/');
+ await page.locator('header input[type=file]').setInputFiles({name:`${name}.glb`,mimeType:'model/gltf-binary',buffer:readFileSync(`tests/browser/fixtures/${name}.glb`)});
+ await expect(page.getByRole('button',{name:'Rescan',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Rig',exact:true}).click();await page.getByTestId('rig-mode-edit').click();
+ await expect.poll(async()=>(await rigViewerState(page)).mode).toBe('edit');
+ const initial=await rigViewerState(page),joint=initial.bones[0];
+ await expect(page.getByText('Animation Clips:',{exact:true}).locator('..')).toContainText(String(initial.durations!.length));
+ const hierarchy=page.locator('main > aside').first();
+ await hierarchy.getByPlaceholder('Search hierarchy...').fill(joint.name);await hierarchy.getByTitle(joint.name,{exact:true}).click();await hierarchy.getByPlaceholder('Search hierarchy...').fill('');
+ await page.getByLabel('Joint position X',{exact:true}).fill(String(joint.position[0]+.05));await page.getByRole('button',{name:'Apply Position',exact:true}).click();
+ await page.getByLabel('Joint rotation Z',{exact:true}).fill('15');await page.getByRole('button',{name:'Apply Rotation',exact:true}).click();
+ const rest=await rigViewerState(page);
+ await page.getByLabel('Export clip duration').fill(String(initial.durations![0]*2));await page.getByRole('button',{name:'Retime Selected Clip',exact:true}).click();
+ await page.getByTestId('rig-mode-pose').click();await page.getByTitle('Play',{exact:true}).click();await page.getByTitle('Stop & Reset',{exact:true}).click();
+ expect((await rigViewerState(page)).bones.find(bone=>bone.uuid===joint.uuid)?.position).toEqual(rest.bones.find(bone=>bone.uuid===joint.uuid)?.position);
+ await page.getByLabel('Shading mode').selectOption('smooth');
+ await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED',{timeout:30000});
+ await test.info().attach(`${name}-editor.png`,{body:await page.screenshot(),contentType:'image/png'});
+ const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Edited GLB',exact:true}).click()]);
+ const stream=await download.createReadStream(),chunks:Buffer[]=[];for await(const chunk of stream!)chunks.push(Buffer.from(chunk));const buffer=Buffer.concat(chunks);
+ await test.info().attach(`${name}-edited.glb`,{body:buffer,contentType:'model/gltf-binary'});
+ await page.locator('header input[type=file]').setInputFiles({name:`${name}-reopened.glb`,mimeType:'model/gltf-binary',buffer});await page.getByRole('button',{name:'Discard and open',exact:true}).click();await expect(page.getByText(`${name}-reopened.glb`,{exact:true})).toBeVisible();
+ const reopened=await rigViewerState(page,true);expect(reopened.durations![0]).toBeCloseTo(initial.durations![0]*2,5);expect(reopened.durations!.slice(1)).toEqual(initial.durations!.slice(1));
+ const actual=reopened.bones.find(bone=>bone.name===joint.name)!,expected=rest.bones.find(bone=>bone.uuid===joint.uuid)!;
+ actual.position.forEach((value:number,axis:number)=>expect(value).toBeCloseTo(expected.position[axis],5));actual.quaternion.forEach((value:number,axis:number)=>expect(value).toBeCloseTo(expected.quaternion[axis],5));
+ expect(errors).toEqual([]);
+});

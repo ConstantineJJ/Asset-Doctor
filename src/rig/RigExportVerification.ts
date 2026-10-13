@@ -71,7 +71,10 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
   }
   for(const node of packet.nodes) {
     const definition=actual.nodes[node.index],before=expected.nodes[node.index];
-    if(node.changed)for(const field of ['matrix','translation','rotation','scale'])restoreField(definition,before,field);
+    if(node.changed) {
+      if(Object.hasOwn(definition,'matrix') || canonical([definition.translation,definition.rotation,definition.scale])!==canonical([node.rest.position,node.rest.quaternion,node.rest.scale]))throw new Error('Serialized authored rest differs.');
+      for(const field of ['matrix','translation','rotation','scale'])restoreField(definition,before,field);
+    }
     if(node.tip) {
       const extras=definition.extras;
       if(canonical(extras?.assetDoctorRigTip)!==canonical({version:1,point:node.tip}))throw new Error('Terminal guide differs.');
@@ -158,6 +161,8 @@ export async function verifyEditedRig(packet:RigExportPacket,output:ArrayBuffer,
       }
     }
     report.meshCount=meshPairs.length;
+    const diagonal=new THREE.Box3().setFromObject(expectedRoot).getSize(new THREE.Vector3()).length();
+    const deformationTolerance=Math.max(1e-6,diagonal*2e-5);
     const channels=mapChannels(actualRoot,loaded.animations,parseGlb(output).document);
     for(const channel of packet.channels) {
       const actualTrack=channels[channel.animation][channel.channel];
@@ -172,7 +177,8 @@ export async function verifyEditedRig(packet:RigExportPacket,output:ArrayBuffer,
         const a=new THREE.Vector3(),b=new THREE.Vector3();
         for(let vertex=0;vertex<count;vertex++) {
           left.getVertexPosition(vertex,a).applyMatrix4(left.matrixWorld);right.getVertexPosition(vertex,b).applyMatrix4(right.matrixWorld);
-          close(a.toArray(),b.toArray(),'Actual animated vertex deformation',2e-4);report.sampledVertices++;
+          if(a.distanceTo(b)>deformationTolerance || ![a.x,a.y,a.z,b.x,b.y,b.z].every(Number.isFinite))throw new Error('Actual animated vertex deformation differs beyond the model-scale tolerance.');
+          report.sampledVertices++;
         }
       }
     };

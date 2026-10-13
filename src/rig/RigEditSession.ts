@@ -38,6 +38,7 @@ export class RigEditSession {
   private gesture:{base:RigSnapshot;past:RigSnapshot[];future:RigSnapshot[];revision:number}|null=null;
   mode:RigMode='inspect';
   revision=0;
+  previewRevision=0;
 
   constructor(root:THREE.Group, clips:THREE.AnimationClip[]) {
     this.root=root;
@@ -91,7 +92,7 @@ export class RigEditSession {
     this.root.updateWorldMatrix(true,true); this.root.updateMatrixWorld(true);
     for(const skeleton of this.skeletons) skeleton.update();
   }
-  restoreRest() { this.apply(this.authored); }
+  restoreRest() { this.apply(this.authored);if(this.mode==='pose')this.previewRevision++; }
   enterEdit() { this.restoreRest(); this.mode='edit'; }
   enterPose() { this.restoreRest(); this.mode='pose'; }
 
@@ -167,7 +168,7 @@ export class RigEditSession {
       this.authored={...this.authored,clips:rebaseClips(this.root,this.authored.clips,changes)};
     });
   }
-  setBoneLength(uuid:string,childUuid:string|null,length:number) {
+  setBoneLength(uuid:string,childUuid:string|null,length:number,childPolicy:ChildPolicy='follow') {
     if(!(length>0) || !Number.isFinite(length)) throw new Error('Length must be finite and positive.');
     const joint=this.bones.get(uuid),child=childUuid && this.bones.get(childUuid);
     if(!joint) throw new Error('Unknown joint.');
@@ -177,7 +178,7 @@ export class RigEditSession {
       this.setTerminalTip(uuid,direction.normalize().multiplyScalar(length).toArray()); return;
     }
     if(!child || child.parent!==joint || child.position.length()<1e-8) throw new Error('Select a direct child joint with a valid direction.');
-    this.commitJoint(child.uuid,{position:child.position.clone().normalize().multiplyScalar(length).toArray()});
+    this.commitJoint(child.uuid,{position:child.position.clone().normalize().multiplyScalar(length).toArray()},childPolicy);
   }
   setTerminalTip(uuid:string,point:number[]) {
     assertFinite(point,3);
@@ -203,6 +204,7 @@ export class RigEditSession {
     assertFinite(rotation,4); const joint=this.bones.get(uuid);
     if(!joint || new THREE.Quaternion().fromArray(rotation).length()<1e-8) throw new Error('Invalid preview joint rotation.');
     joint.quaternion.fromArray(rotation).normalize(); joint.updateMatrix(); this.root.updateMatrixWorld(true);
+    this.previewRevision++;
   }
   undo() { if(this.isGestureActive)throw new Error('Finish the joint drag before Undo.');const state=this.past.pop(); if(!state) return; this.future.push(this.authored); this.authored=state; this.restoreRest(); this.revision++; }
   redo() { if(this.isGestureActive)throw new Error('Finish the joint drag before Redo.');const state=this.future.pop(); if(!state) return; this.past.push(this.authored); this.authored=state; this.restoreRest(); this.revision++; }

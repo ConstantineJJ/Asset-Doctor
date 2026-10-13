@@ -10,6 +10,7 @@ import { measureRootMotion } from '../analysis/AnimationAnalyzer';
 import { createPresentationWrapper, documentToViewer } from './AssetPresentation';
 import { RigEditSession, type RigMode } from '../rig/RigEditSession';
 import { RigGizmo, type RigGizmoSettings } from '../rig/RigGizmo';
+import { capturePreviewPose } from '../rig/PosePreview';
 
 export interface SceneManagerCallbacks {
   onMeshSelected?: (uuid: string | null) => void;
@@ -46,6 +47,7 @@ export class SceneManager {
   private rigGizmo:RigGizmo;
   private rigSettings:RigGizmoSettings={tool:'translate',space:'local',target:'joint',childPolicy:'follow'};
   private activeClipIndex=0;
+  private rigInteractionBlocked=false;
 
   // Model Rotation & Turntable
   private modelRotationY: number = 0;
@@ -144,7 +146,7 @@ export class SceneManager {
     this.initHelpers();
     this.bindEvents();
     this.rigGizmo=new RigGizmo(this.scene,this.camera,this.renderer.domElement,{
-      drag:active=>{if(active && this.rigSession?.mode==='pose') this.detachRigMixer();this.cameraController.controls.enabled=!active;this.callbacks.onRigDrag?.(active);},
+      drag:active=>{if(active && this.rigSession?.mode==='pose') this.detachRigMixer(true);this.cameraController.controls.enabled=!active;this.callbacks.onRigDrag?.(active);},
       changed:()=>{this.syncRigClips();this.callbacks.onRigChanged?.();},
       error:message=>this.callbacks.onRigError?.(message),
     });
@@ -680,14 +682,7 @@ export class SceneManager {
     // 5. Animations setup
     this.animationClips = this.rigSession.clips;
     if (clips.length > 0) {
-      this.animationMixer = new THREE.AnimationMixer(assetRoot);
-      this.animationMixer.addEventListener('finished', () => {
-        if (this.animationLoop) return;
-        this.isPlayingAnimation = false;
-        this.callbacks.onAnimationPlaybackStateChange?.(false);
-        const duration = this.activeAnimationAction?.getClip().duration ?? 0;
-        this.callbacks.onAnimationTimeUpdate?.(duration, duration);
-      });
+      this.animationMixer = this.createAnimationMixer(assetRoot);
       this.playAnimationClip(0);
     }
 
@@ -723,6 +718,14 @@ export class SceneManager {
     console.log('[AssetDoctor Whole-Model Inspection]', this.lastWholeModelInspection);
   }
 
+  private createAnimationMixer(root:THREE.Group) {
+    const mixer=new THREE.AnimationMixer(root);
+    mixer.addEventListener('finished',()=>{
+      if(this.animationLoop)return;
+      this.isPlayingAnimation=false;this.callbacks.onAnimationPlaybackStateChange?.(false);
+      const duration=this.activeAnimationAction?.getClip().duration??0;this.callbacks.onAnimationTimeUpdate?.(duration,duration);
+    });return mixer;
+  }
   public playAnimationClip(clipIndex: number): boolean {
     if(this.rigSession?.mode==='edit') return false;
     if (
@@ -1046,6 +1049,7 @@ export class SceneManager {
       this.callbacks.onMeshSelected(uuid);
     }
     this.rigGizmo.configure(this.rigSession,uuid,this.rigSettings);
+    this.rigGizmo.controls.enabled=!this.rigInteractionBlocked;
   }
 
   private getAssetDiagonal(): number {
@@ -1617,23 +1621,29 @@ export class SceneManager {
     this.currentAssetRoot.updateMatrixWorld(true);
     this.callbacks.onAnimationTimeUpdate?.(0, duration);
     this.rigGizmo.refresh();
+    this.rigGizmo.controls.enabled=!this.rigInteractionBlocked;
   }
 
   /** Stop cached bindings before authored mutation; rebuild them from the new rest. */
-  public detachRigMixer() {
+  public detachRigMixer(preservePreview=false) {
+    const restorePreview=preservePreview&&this.currentAssetRoot?capturePreviewPose(this.currentAssetRoot):null;
     this.isPlayingAnimation=false;
     this.animationMixer?.stopAllAction();
     if(this.currentAssetRoot) this.animationMixer?.uncacheRoot(this.currentAssetRoot);
     this.animationMixer=null;this.activeAnimationAction=null;
-    this.rigSession?.restoreRest();
+    if(restorePreview)restorePreview();else this.rigSession?.restoreRest();
     this.callbacks.onAnimationPlaybackStateChange?.(false);
   }
   public syncRigClips() {
     if(!this.rigSession || !this.currentAssetRoot) return;
     this.animationClips=this.rigSession.clips;
-    if(!this.animationMixer && this.rigSession.mode!=='edit') this.animationMixer=new THREE.AnimationMixer(this.currentAssetRoot);
+    if(!this.animationMixer && this.rigSession.mode!=='edit') this.animationMixer=this.createAnimationMixer(this.currentAssetRoot);
     this.callbacks.onAnimationTimeUpdate?.(0,this.animationClips[this.activeClipIndex]?.duration??0);
     this.rigGizmo.configure(this.rigSession,this.selectedMeshUuid,this.rigSettings);
+    this.rigGizmo.controls.enabled=!this.rigInteractionBlocked;
+  }
+  public previewRigRotation(uuid:string,quaternion:number[]) {
+    this.detachRigMixer(true);this.rigSession?.previewPoseRotation(uuid,quaternion);this.syncRigClips();this.callbacks.onRigChanged?.();
   }
   public setRigMode(mode:RigMode) {
     this.detachRigMixer();
@@ -1642,8 +1652,9 @@ export class SceneManager {
     this.syncRigClips();
   }
   public setRigGizmoSettings(settings:RigGizmoSettings) {
-    this.rigSettings=settings;this.rigGizmo.configure(this.rigSession,this.selectedMeshUuid,settings);
+    this.rigSettings=settings;this.rigGizmo.configure(this.rigSession,this.selectedMeshUuid,settings);this.rigGizmo.controls.enabled=!this.rigInteractionBlocked;
   }
+  public setRigInteractionBlocked(blocked:boolean) {this.rigInteractionBlocked=blocked;this.rigGizmo.controls.enabled=!blocked;}
 
   public toggleOrigin(visible?: boolean) {
     this.isOriginVisible = visible !== undefined ? visible : !this.isOriginVisible;
@@ -1755,6 +1766,7 @@ export class SceneManager {
       }
       this.updateSelectedBoneMarker();
       this.updateSkeletonJoints();
+      this.rigGizmo.update();
 
       this.renderer.render(this.scene, this.camera);
 

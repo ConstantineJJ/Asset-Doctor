@@ -137,6 +137,12 @@ export class RenderModeManager {
     this.shading.delete(root);
   }
 
+  /** Smooth normals are a viewer override; exports use the underlying authored geometry. */
+  public authoredGeometry(mesh:THREE.Mesh):THREE.BufferGeometry {
+    for(const state of this.shading.values()) {const source=state.geometrySources.get(mesh);if(source)return source;}
+    return mesh.geometry;
+  }
+
   private disposeAllShading() {
     for (const root of [...this.shading.keys()]) this.disposeRootShading(root);
   }
