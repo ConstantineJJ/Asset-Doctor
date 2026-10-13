@@ -36,8 +36,17 @@ export function geometrySnapshotByteLength(snapshot: GeometrySnapshot): number {
 
 export function geometryMatches(geometry: THREE.BufferGeometry, snapshot: GeometrySnapshot): boolean {
   const current = captureGeometry(geometry);
-  return current.layout === snapshot.layout && current.entries.length === snapshot.entries.length &&
-    current.entries.every((value, i) => value.layout === snapshot.entries[i].layout &&
-      value.bytes.length === snapshot.entries[i].bytes.length &&
-      value.bytes.every((byte, j) => byte === snapshot.entries[i].bytes[j]));
+  if(current.layout!==snapshot.layout || current.entries.length!==snapshot.entries.length)return false;
+  for(let i=0;i<current.entries.length;i++) {
+    const value=current.entries[i],expected=snapshot.entries[i];
+    if(value.layout!==expected.layout || value.bytes.length!==expected.bytes.length)return false;
+    // Exact word comparison reduces loop work while retaining every byte, including tails.
+    const count=Math.floor(value.bytes.length/4);
+    if(value.bytes.byteOffset%4===0 && expected.bytes.byteOffset%4===0) {
+      const left=new Uint32Array(value.bytes.buffer,value.bytes.byteOffset,count),right=new Uint32Array(expected.bytes.buffer,expected.bytes.byteOffset,count);
+      for(let j=0;j<count;j++)if(left[j]!==right[j])return false;
+      for(let j=count*4;j<value.bytes.length;j++)if(value.bytes[j]!==expected.bytes[j])return false;
+    } else for(let j=0;j<value.bytes.length;j++) if(value.bytes[j]!==expected.bytes[j])return false;
+  }
+  return true;
 }

@@ -6,6 +6,7 @@ import { runDiagnosticCoverageTests } from '../src/analysis/DiagnosticCoverageTe
 import { runSourceFidelityTests } from '../src/analysis/SourceFidelityTests';
 import { runCompareLayoutTests } from '../src/compare/CompareLayoutTests';
 import { runCompareCloneTests } from '../src/compare/CompareCloneTests';
+import { runComputeWorkerTests } from '../src/workers/ComputeWorkerTests';
 import { runGltfSourceAuditTests } from '../src/loaders/GltfSourceAuditTests';
 import { runGLBLoaderServiceTests } from '../src/loaders/GLBLoaderServiceTests';
 import { runAuthoredMaterialStateTests } from '../src/viewer/AuthoredMaterialStateTests';
@@ -25,6 +26,7 @@ async function main() {
     ...runSourceFidelityTests(),
     ...runCompareLayoutTests(),
     ...runCompareCloneTests(),
+    ...(await runComputeWorkerTests()),
     ...runGltfSourceAuditTests(),
     ...(await runGLBLoaderServiceTests()),
     ...runAuthoredMaterialStateTests(),

@@ -198,3 +198,12 @@ export function previewRepairIssue(
   syncSurgicalHealMemory(engine);
   return preview;
 }
+
+export async function previewRepairIssueAsync(engine:SurgicalHealEngine,root:THREE.Object3D,issue:HealthIssue) {
+  const operation=getRepairOperationForIssue(issue);
+  if(!operation?.capabilities.preview || !issue.meshUuid)return null;
+  const startedAt=nowMs();
+  const preview=await engine.previewInWorker(root,issue.meshUuid,operation.kind,issue.id);
+  performanceCore.record('repairPreview',nowMs()-startedAt);syncSurgicalHealMemory(engine);
+  return preview;
+}

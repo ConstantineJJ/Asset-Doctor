@@ -73,11 +73,13 @@ export function installSurgicalHealPerformanceInstrumentation() {
   const proto = SurgicalHealEngine.prototype as unknown as Record<string, (...args: any[]) => any>;
   const asEngine = (value: unknown) => value as SurgicalHealEngine;
 
-  const originalApplyPending = proto.applyPending;
-  proto.applyPending = function (...args: any[]) {
+  for(const method of ['applyPending','applyPendingAsync']) {
+  const originalApplyPending = proto[method];
+  proto[method] = function (...args: any[]) {
     const startedAt = nowMs();
     const result = originalApplyPending.apply(this, args);
     const engine = asEngine(this);
+    const record=(result:any)=>{
     if (result?.success && result.report?.operationId) {
       verificationStarts.set(engine, {
         operationId: result.report.operationId,
@@ -86,7 +88,10 @@ export function installSurgicalHealPerformanceInstrumentation() {
     }
     syncSurgicalHealMemory(engine);
     return result;
+    };
+    return result instanceof Promise?result.then(record):record(result);
   };
+  }
 
   const originalCompleteVerification = proto.completeVerification;
   proto.completeVerification = function (...args: any[]) {

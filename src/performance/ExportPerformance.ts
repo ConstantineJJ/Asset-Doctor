@@ -9,9 +9,10 @@ export function installExportPerformanceInstrumentation() {
   installed = true;
 
   const proto = RepairedExportService.prototype as unknown as Record<string, (...args: any[]) => any>;
-  const original = proto.exportAndVerify;
+  for(const method of ['exportAndVerify','exportAndVerifyInWorker']) {
+  const original = proto[method];
 
-  proto.exportAndVerify = async function (...args: any[]) {
+  proto[method] = async function (...args: any[]) {
     const result = await original.apply(this, args);
     const perf = result?.performance;
     if (perf) {
@@ -25,4 +26,5 @@ export function installExportPerformanceInstrumentation() {
     }
     return result;
   };
+  }
 }

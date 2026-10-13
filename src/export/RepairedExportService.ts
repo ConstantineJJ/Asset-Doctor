@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import {ComputeWorkerClient} from '../workers/ComputeWorkerClient';
+import {packRoot} from '../workers/GeometryPacket';
+import {captureGeometry,geometryMatches} from '../heal/GeometrySnapshot';
 import { getDocumentExtras, getTextureExtras } from '../loaders/AssetRuntimeMetadata';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
@@ -10,6 +13,7 @@ import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 import type {
   ExportVerificationReport,
   HealOperationReport,
+  TopologyStats,
 } from '../types';
 import { copyGeometryData } from '../heal/GeometryRemap';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
@@ -85,6 +89,31 @@ function repairedMeshFingerprint(root: THREE.Object3D, reports: HealOperationRep
 }
 
 export class RepairedExportService {
+  private readonly compute=new ComputeWorkerClient(()=>new Worker(new URL('../workers/export-compute.worker.ts',import.meta.url),{type:'module'}));
+  private readonly topology=new WeakMap<THREE.Mesh,TopologyStats>();
+  constructor(private readonly resourceBaseUrl?:string,private readonly ownsImmutableInputs=false) {}
+  private topologyStats(mesh:THREE.Mesh) {
+    // Only worker-owned request copies qualify. Mutable UI/legacy callers always remeasure.
+    const cached=this.ownsImmutableInputs?this.topology.get(mesh):undefined;
+    if(cached)return cached;
+    const stats=analyzeMeshTopology(meshTopologyData(mesh));
+    if(this.ownsImmutableInputs)this.topology.set(mesh,stats);
+    return stats;
+  }
+  public cancelActive() {this.compute.dispose();}
+  public async exportAndVerifyInWorker(request:RepairedExportRequest):Promise<RepairedExportResult> {
+    const startedAt=nowMs();
+    const session=repairedMeshFingerprint(request.currentRoot,request.healReports);
+    const structure=this.nodeStructureSignature(request.currentRoot);
+    const snapshots=this.collectMeshes(request.currentRoot).map(mesh=>({mesh,snapshot:captureGeometry(mesh.geometry)}));
+    const source=request.source.kind==='buffer'?{...request.source,buffer:request.source.buffer.slice(0)}:request.source;
+    const result=await this.compute.request<RepairedExportResult>({source,root:packRoot(request.currentRoot),assetName:request.assetName,
+      healReports:request.healReports,resourceBaseUrl:new URL('.',location.href).href});
+    if(session!==repairedMeshFingerprint(request.currentRoot,request.healReports) || structure!==this.nodeStructureSignature(request.currentRoot) ||
+       snapshots.some(({mesh,snapshot})=>!geometryMatches(mesh.geometry,snapshot)))throw new Error('export.errors.geometryChanged');
+    result.performance.totalMs=nowMs()-startedAt;
+    return result;
+  }
   public async exportAndVerify(request: RepairedExportRequest): Promise<RepairedExportResult> {
     const totalStart = nowMs();
     const { currentRoot, healReports, assetName } = request;
@@ -131,7 +160,7 @@ export class RepairedExportService {
       repairedOrdinals.add(ordinal);
 
       const mesh = currentMeshes[ordinal];
-      const stats = analyzeMeshTopology(meshTopologyData(mesh));
+      const stats = this.topologyStats(mesh);
       const normals = measureGeometryNormals(mesh.geometry);
       const skin = measureSkinWeights(mesh);
       if (
@@ -213,7 +242,7 @@ export class RepairedExportService {
       }
 
       const reopenStart = nowMs();
-      const verificationLoader = new GLBLoaderService();
+      const verificationLoader = new GLBLoaderService(this.resourceBaseUrl);
       try {
         const loaded = await verificationLoader.loadFromArrayBuffer(
           output,
@@ -273,7 +302,7 @@ export class RepairedExportService {
       let targetInvalidSkinWeightsActual = 0;
       let targetRedundantSkinInfluencesActual = 0;
       if (targetMesh) {
-        const targetStats = analyzeMeshTopology(meshTopologyData(targetMesh));
+        const targetStats = this.topologyStats(targetMesh);
         const targetNormals = measureGeometryNormals(targetMesh.geometry);
         targetTrianglesActual = targetStats.triangleCount;
         targetDegeneratesActual = targetStats.degenerateTriangles;
@@ -422,7 +451,7 @@ export class RepairedExportService {
       return { root: sample.root, animations: sample.animations };
     }
 
-    const loader = new GLBLoaderService();
+    const loader = new GLBLoaderService(this.resourceBaseUrl);
     try {
       const loaded = await loader.loadFromArrayBuffer(
         source.buffer,
@@ -589,7 +618,7 @@ export class RepairedExportService {
   }
 
   private repairGeometrySignature(mesh: THREE.Mesh) {
-    const stats = analyzeMeshTopology(meshTopologyData(mesh));
+    const stats = this.topologyStats(mesh);
     const normals = measureGeometryNormals(mesh.geometry);
     const skin = measureSkinWeights(mesh);
     const attributes = Object.entries(mesh.geometry.attributes)

@@ -28,7 +28,7 @@ export interface RepairQueueRunnerState {
 
 export interface RepairQueueRunnerAdapter {
   getCandidates: () => RepairQueueCandidate[];
-  preview: (candidate: RepairQueueCandidate) => HealPreview | null;
+  preview: (candidate: RepairQueueCandidate) => HealPreview | null | Promise<HealPreview | null>;
   apply: (candidate: RepairQueueCandidate, preview: HealPreview) => Promise<HealOperationReport | null>;
   shouldStop: () => boolean;
   assetStillCurrent: () => boolean;
@@ -123,7 +123,14 @@ export async function runSafeRepairQueue(
         );
       }
 
-      const preview = adapter.preview(candidate);
+      let preview:HealPreview|null;
+      try {preview=await adapter.preview(candidate);}catch(error) {
+        if(adapter.shouldStop() || !adapter.assetStillCurrent())return terminal('stopped',completed,skipped,candidates.length,adapter.assetStillCurrent()?'stoppedByUser':'assetChanged');
+        throw error;
+      }
+      if(adapter.shouldStop() || !adapter.assetStillCurrent()) {
+        return terminal('stopped',completed,skipped,candidates.length,adapter.assetStillCurrent()?'stoppedByUser':'assetChanged');
+      }
       if (!preview || preview.status !== 'READY') {
         blockedKeys.add(candidate.key);
         skipped++;

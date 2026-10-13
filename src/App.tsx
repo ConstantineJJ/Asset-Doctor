@@ -14,7 +14,7 @@ import { HealthEngine } from './health/HealthEngine';
 import { useI18n } from './i18n';
 import { clearHealReport, readHealReport, saveHealReport } from './heal/HealReportStorage';
 import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
-import { previewRepairIssue } from './heal/framework/RepairRegistry';
+import { previewRepairIssueAsync } from './heal/framework/RepairRegistry';
 import { buildRepairQueueCandidates } from './heal/RepairQueue';
 import { runSafeRepairQueue } from './heal/SafeRepairQueueRunner';
 import {
@@ -219,6 +219,8 @@ export function App() {
       loaderServiceRef.current = null;
       workerManagerRef.current?.dispose();
       workerManagerRef.current = null;
+      healEngineRef.current?.clear();
+      exportServiceRef.current?.cancelActive();
     };
   }, []);
 
@@ -326,6 +328,10 @@ export function App() {
       sizeBytes?: number
     ) => {
       const runId = ++analysisRunIdRef.current;
+      const yieldAnalysisPhase = async () => {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        return runId === analysisRunIdRef.current;
+      };
 
       setProgressiveState({
         geometry: 'running',
@@ -346,10 +352,14 @@ export function App() {
       setSkinningStats(skel);
       const anims = analyzeAnimations(clips, skel.rootBoneNames);
       const integrity = analyzeIntegrity(root);
+      // Keep each complete diagnostic pass, but give the desktop event loop a
+      // turn between buffer scans. A replacement asset invalidates this run.
+      if (!await yieldAnalysisPhase()) return false;
       const animationDiagnostics = analyzeAnimationDiagnostics(clips, root);
       const xforms = analyzeTransforms(root);
       const totalTracks = clips.reduce((acc, c) => acc + c.tracks.length, 0);
       const normalsUv = analyzeNormalsAndUv(root);
+      if (!await yieldAnalysisPhase()) return false;
 
       analysisSnapshotRef.current = {
         summary: geomSummary,
@@ -384,6 +394,7 @@ export function App() {
 
       // Initial Diagnostic Core calculation (without topology yet).
       rebuildDiagnosticReport(diagnosticProfileIdRef.current, []);
+      if (!await yieldAnalysisPhase()) return false;
 
       // 2. Heavy Topology Analysis in Worker
       if (workerManagerRef.current) {
@@ -454,6 +465,7 @@ export function App() {
       setExportReport(null);
       setExportError(null);
       healEngineRef.current?.clear();
+      exportServiceRef.current?.cancelActive();
       setActiveRepairReports([]);
       repairQueueStopRef.current = true;
       repairQueueRunningRef.current = false;
@@ -788,12 +800,15 @@ export function App() {
     );
   };
 
-  const handlePreviewHeal = (issue: HealthIssue) => {
+  const handlePreviewHeal = async (issue: HealthIssue) => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
     if (!root || !engine || healBusyRef.current) return;
 
-    const preview = previewRepairIssue(engine, root, issue);
+    healBusyRef.current=true;setHealBusy(true);
+    try {
+    const preview = await previewRepairIssueAsync(engine, root, issue);
+    if(root!==currentAssetRootRef.current)return;
     if (!preview) return;
 
     setHealPreview(preview);
@@ -801,6 +816,9 @@ export function App() {
     if (preview.status === 'READY') {
       handleFocusIssue(issue);
     }
+    } catch(error) {
+      if(root===currentAssetRootRef.current && (error as Error)?.name!=='AbortError')setHealError(t('heal.errors.operationFailed'));
+    } finally {healBusyRef.current=false;setHealBusy(false);}
   };
 
   const handleCancelHealPreview = () => {
@@ -828,12 +846,14 @@ export function App() {
     setHealBusy(true);
     setHealError(null);
     exportResultRef.current = null;
+    exportServiceRef.current?.cancelActive();
     exportRequestRef.current++;
     setSavedExport(null);
     setExportReport(null);
     setExportError(null);
     try {
-      const result = undo ? engine.undoLast(root) : engine.applyPending(root, fileName);
+      const result = undo ? engine.undoLast(root) : await engine.applyPendingAsync(root, fileName);
+      if(currentAssetRootRef.current!==root)return null;
       if (!result.success) {
         const reason = result.reasonKey ? t(result.reasonKey) : result.reason ?? t('heal.blocked');
         if (undo) setHealError(reason);
@@ -845,6 +865,8 @@ export function App() {
       setHealUndoState(engine.getUndoState());
       publishHealReport(engine);
 
+      await new Promise<void>(resolve=>setTimeout(resolve,0));
+      if(currentAssetRootRef.current!==root)return null;
       let complete = false;
       try {
         complete = (await refreshAfterHeal()) === true;
@@ -905,14 +927,17 @@ export function App() {
     setTreeRoot(buildSceneTree(root));
   };
 
-  const handlePreviewNextRepairQueue = () => {
+  const handlePreviewNextRepairQueue = async () => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
     if (!root || !engine || healBusyRef.current || repairQueueState.status === 'running') return;
 
+    healBusyRef.current=true;setHealBusy(true);
+    try {
     const candidates = buildRepairQueueCandidates(healthIssuesRef.current);
     for (const candidate of candidates) {
-      const preview = previewRepairIssue(engine, root, candidate.issue);
+      const preview = await previewRepairIssueAsync(engine, root, candidate.issue);
+      if(root!==currentAssetRootRef.current)return;
       if (!preview) continue;
       setHealPreview(preview);
       if (preview.status === 'READY') {
@@ -920,11 +945,15 @@ export function App() {
         return;
       }
     }
+    } catch(error) {
+      if(root===currentAssetRootRef.current && (error as Error)?.name!=='AbortError')setHealError(t('heal.errors.operationFailed'));
+    } finally {healBusyRef.current=false;setHealBusy(false);}
   };
 
   const handleStopRepairQueue = () => {
     if (!repairQueueRunningRef.current && repairQueueState.status !== 'running') return;
     repairQueueStopRef.current = true;
+    if(!healBusyRef.current)healEngineRef.current?.cancelPreview();
     setRepairQueueState((previous) => ({
       ...previous,
       stopReason: t('heal.queue.stopRequested'),
@@ -1006,7 +1035,7 @@ export function App() {
       const outcome = await runSafeRepairQueue(
         {
           getCandidates: () => buildRepairQueueCandidates(healthIssuesRef.current),
-          preview: (candidate) => previewRepairIssue(engine, root, candidate.issue),
+          preview: (candidate) => previewRepairIssueAsync(engine, root, candidate.issue),
           apply: async (_candidate, preview) => {
             setHealPreview(preview);
             return await performHeal(false);
@@ -1047,7 +1076,7 @@ export function App() {
     const source = currentExportSourceRef.current;
     const engine = healEngineRef.current;
     const service = exportServiceRef.current;
-    if (!root || !source || !engine || !service || exportBusyRef.current) {
+    if (!root || !source || !engine || !service || exportBusyRef.current || healBusyRef.current || repairQueueRunningRef.current) {
       setExportError(t('export.errors.unavailable'));
       return null;
     }
@@ -1066,7 +1095,7 @@ export function App() {
     setExportReport(null);
 
     try {
-      const result = await service.exportAndVerify({
+      const result = await service.exportAndVerifyInWorker({
         source,
         currentRoot: root,
         assetName: fileName,
@@ -1139,6 +1168,7 @@ export function App() {
   };
 
   const canExportRepaired = Boolean(
+    !healBusy && repairQueueState.status !== 'running' &&
     activeRepairReports.length > 0 &&
     activeRepairReports.every(
       (report) => report.status === 'VERIFIED' && report.pipeline === 'complete' && !report.undoneAt

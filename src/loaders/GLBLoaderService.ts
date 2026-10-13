@@ -31,7 +31,7 @@ export class GLBLoaderService {
   private activeResourceErrors: string[] = [];
   private loadSequence: Promise<void> = Promise.resolve();
 
-  constructor() {
+  constructor(resourceBaseUrl?:string) {
     this.loadingManager = new THREE.LoadingManager();
     this.loadingManager.onError = (url) => {
       if (!this.activeResourceErrors.includes(url)) this.activeResourceErrors.push(url);
@@ -47,7 +47,7 @@ export class GLBLoaderService {
     // into dist/draco for production/Tauri, so model loading needs no CDN/network.
     try {
       this.dracoLoader = new DRACOLoader(this.loadingManager);
-      const decoderPath = typeof window !== 'undefined'
+      const decoderPath = resourceBaseUrl ? new URL('draco/',resourceBaseUrl).href : typeof window !== 'undefined'
         ? new URL('draco/', window.location.href).href
         : './draco/';
       this.dracoLoader.setDecoderPath(decoderPath);
@@ -62,7 +62,7 @@ export class GLBLoaderService {
     // example export verification), a tiny temporary renderer is used lazily.
     try {
       this.ktx2Loader = new KTX2Loader(this.loadingManager);
-      const transcoderPath = typeof window !== 'undefined'
+      const transcoderPath = resourceBaseUrl ? new URL('basis/',resourceBaseUrl).href : typeof window !== 'undefined'
         ? new URL('basis/', window.location.href).href
         : './basis/';
       this.ktx2Loader.setTranscoderPath(transcoderPath);
@@ -91,7 +91,9 @@ export class GLBLoaderService {
     // Export verification and other non-viewport loader instances may not own a
     // renderer. Detect support once using a minimal temporary context; the KTX2
     // worker configuration does not retain this renderer afterwards.
-    const probe = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'low-power' });
+    const canvas=typeof document==='undefined' && typeof OffscreenCanvas!=='undefined'
+      ? new OffscreenCanvas(1,1) as unknown as HTMLCanvasElement : undefined;
+    const probe = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'low-power' });
     try {
       this.configureRenderer(probe);
     } finally {

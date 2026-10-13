@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { documentMatrix } from '../viewer/AssetPresentation';
-import type { HealApplyResult, HealOperationReport, HealPreview, HealUndoState } from '../types';
+import type { HealApplyResult, HealMetrics, HealOperationKind, HealOperationReport, HealPreview, HealUndoState } from '../types';
+import { ComputeWorkerClient } from '../workers/ComputeWorkerClient';
+import { packRoot, unpackGeometry, type GeometryPacket } from '../workers/GeometryPacket';
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
 import { captureAttribute, captureGeometry, geometryMatches, type GeometrySnapshot } from './GeometrySnapshot';
@@ -19,7 +21,7 @@ import { planRemoveExactDuplicateTriangles } from './DuplicateTriangleRepair';
 
 type SupportedIndexArray = Uint8Array | Uint16Array | Uint32Array;
 
-type PendingHeal =
+export type PendingHeal =
   | {
       mutation: 'index-only';
       preview: HealPreview;
@@ -70,6 +72,28 @@ export class SurgicalHealEngine {
   private pending: PendingHeal | null = null;
   private undoStack: UndoHeal[] = [];
   private lastOperation: HealOperationReport | null = null;
+  private generation = 0;
+  private readonly compute = new ComputeWorkerClient(() => new Worker(new URL('../workers/heal-compute.worker.ts',import.meta.url),{type:'module'}));
+
+  /** Only the compute worker reads this plan; the UI never receives mutable plan resources. */
+  public getComputedPlan() { return this.pending; }
+
+  public async previewInWorker(root:THREE.Object3D,meshUuid:string,operation:HealOperationKind,issueId:string):Promise<HealPreview> {
+    this.cancelPreview();
+    const generation=this.generation;
+    const result=await this.compute.request<{preview:HealPreview;plan:null|{mutation:PendingHeal['mutation'];geometryUuid:string;snapshot:GeometrySnapshot;replacement:GeometryPacket}}>({kind:'preview',root:packRoot(root),meshUuid,operation,issueId});
+    if(generation!==this.generation) throw new Error('Stale repair preview');
+    if(result.plan) {
+      const mesh=root.getObjectByProperty('uuid',meshUuid) as THREE.Mesh|undefined;
+      if(!mesh?.isMesh || !geometryMatches(mesh.geometry,result.plan.snapshot)) throw new Error('Geometry changed during preview');
+      const replacement=unpackGeometry(result.plan.replacement);
+      const base={preview:result.preview,geometryUuid:result.plan.geometryUuid,snapshot:result.plan.snapshot};
+      this.pending=result.plan.mutation==='index-only'
+        ? {mutation:'index-only',...base,replacementIndex:replacement.index!}
+        : {mutation:'geometry',...base,replacementGeometry:replacement};
+    }
+    return result.preview;
+  }
 
   public getLastOperation(): HealOperationReport | null {
     return this.lastOperation ? structuredClone(this.lastOperation) : null;
@@ -165,6 +189,8 @@ export class SurgicalHealEngine {
   }
 
   public clear() {
+    this.generation++;
+    this.compute.dispose();
     this.disposePending();
     for (const entry of this.undoStack) {
       if (entry.restore.mutation === 'geometry') {
@@ -176,6 +202,8 @@ export class SurgicalHealEngine {
   }
 
   public cancelPreview() {
+    this.generation++;
+    this.compute.dispose();
     this.disposePending();
   }
 
@@ -909,6 +937,37 @@ export class SurgicalHealEngine {
   }
 
   public applyPending(root: THREE.Object3D, assetName = ''): HealApplyResult {
+    const steps=this.applySteps(root,assetName);
+    let step=steps.next();
+    while(!step.done) {
+      if(!step.value){step=steps.next(null);continue;}
+      let metrics:HealMetrics|null=null;
+      try {metrics=healMetrics(analyzeMeshTopology(meshTopologyData(step.value)),step.value.geometry,step.value);}catch { /* Preserve the existing before/PARTIAL error paths. */ }
+      step=steps.next(metrics);
+    }
+    return step.value;
+  }
+
+  public async applyPendingAsync(root:THREE.Object3D,assetName:string):Promise<HealApplyResult> {
+    const generation=this.generation,steps=this.applySteps(root,assetName);
+    let step=steps.next();
+    while(!step.done) {
+      if(!step.value) {
+        await new Promise<void>(resolve=>setTimeout(resolve,0));
+        if(generation!==this.generation)return steps.return({success:false,reason:'Repair cancelled because the asset changed.'}).value as HealApplyResult;
+        step=steps.next(null);continue;
+      }
+      const mesh=step.value,snapshot=captureGeometry(mesh.geometry);
+      let metrics:HealMetrics|null=null;
+      try {metrics=await this.compute.request<HealMetrics>({kind:'measure',root:packRoot(root),meshUuid:mesh.uuid});}catch { /* Before failure cancels; after failure retains Undo and remains PARTIAL. */ }
+      if(generation!==this.generation) return steps.return({success:false,reason:'Repair cancelled because the asset changed.'}).value as HealApplyResult;
+      if(!geometryMatches(mesh.geometry,snapshot)) metrics=null;
+      step=steps.next(metrics);
+    }
+    return step.value;
+  }
+
+  private *applySteps(root:THREE.Object3D,assetName:string):Generator<THREE.Mesh|null,HealApplyResult,HealMetrics|null> {
     const pending = this.pending;
     if (!pending) {
       return { success: false, reason: 'No Surgical Heal preview is pending.' };
@@ -944,15 +1003,15 @@ export class SurgicalHealEngine {
       return { success: false, reasonKey: 'heal.errors.sharedGeometry' };
     }
 
-    let before;
-    try {
-      before = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), geometry, mesh);
-    } catch {
+    const before=yield mesh;
+    if(!before) {
       this.disposePending();
       return { success: false, reasonKey: 'heal.errors.beforeUnavailable' };
     }
 
-    let restore: UndoRestore;
+    let restore: UndoRestore|undefined;
+    let restoreRecorded=false;
+    try {
     let buffersMatch = false;
 
     if (pending.mutation === 'index-only') {
@@ -983,13 +1042,11 @@ export class SurgicalHealEngine {
 
     const appliedGeometry = mesh.geometry;
     const appliedSnapshot = captureGeometry(appliedGeometry);
+    // Paint the actual mutation before extracting the independent worker postcheck.
+    yield null;
 
-    let after = null;
-    try {
-      after = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), mesh.geometry, mesh);
-    } catch {
-      // An unavailable postcheck remains PARTIAL while Undo stays available.
-    }
+    const after=yield mesh;
+    buffersMatch = buffersMatch && geometryMatches(mesh.geometry,appliedSnapshot);
 
     const verified = verifyHealOperation(
       pending.preview.operation,
@@ -1029,6 +1086,7 @@ export class SurgicalHealEngine {
       appliedSnapshot,
       report,
     });
+    restoreRecorded=true;
 
     const result: HealApplyResult = {
       success: true,
@@ -1046,6 +1104,10 @@ export class SurgicalHealEngine {
     // For geometry mutation the replacement is now owned by the scene.
     this.pending = null;
     return result;
+    } finally {
+      // A replaced asset must not retain the old geometry while postcheck was awaiting.
+      if(restore?.mutation==='geometry' && !restoreRecorded) restore.previousGeometry.dispose();
+    }
   }
 
   public undoLast(root: THREE.Object3D): HealApplyResult {
