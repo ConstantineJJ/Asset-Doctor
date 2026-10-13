@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { GLBLoaderService } from '../loaders/GLBLoaderService';
 import { rigFixture, type RigFixtureOptions } from '../../tests/rig-fixtures';
 import { RigEditSession } from './RigEditSession';
+import {boneAxis} from './RigAxis';
 import { getSourceAssociation, getSourceDocument } from '../loaders/AssetRuntimeMetadata';
 
 interface TestResult { name: string; passed: boolean; actual?: unknown; expected?: unknown }
@@ -294,6 +295,16 @@ export async function runRigEditTests(): Promise<TestResult[]> {
     session.enterEdit();root.updateMatrixWorld(true);const leaf=bone(root,'Leaf'),world=leaf.matrixWorld.toArray();
     session.setBoneLength(bone(root,'Root').uuid,bone(root,'Child').uuid,3.5,'hold');root.updateMatrixWorld(true);
     close(leaf.matrixWorld.toArray(),world);close(bone(root,'Child').position.toArray(),[0,3.5,0]);
+  });
+  await test('Bone twist uses the selected branch axis, preserves endpoint and rest shape, and has exact Undo', (root,session)=>{
+    session.enterEdit();const joint=bone(root,'Root'),child=bone(root,'Side'),leaf=bone(root,'Leaf');
+    const axis=boneAxis(joint,child.uuid);close(axis.toArray(),child.position.clone().normalize().toArray());
+    const endpoint=child.getWorldPosition(new THREE.Vector3()).toArray(),before=worldVertices(root),rest=session.getRest(joint.uuid)!;
+    const q=joint.quaternion.clone().multiply(new THREE.Quaternion().setFromAxisAngle(axis,.4));
+    session.commitJoint(joint.uuid,{quaternion:q.toArray()});root.updateMatrixWorld(true);
+    close(child.getWorldPosition(new THREE.Vector3()).toArray(),endpoint);close(worldVertices(root),before);
+    session.undo();close(joint.quaternion.toArray(),rest.quaternion);
+    close(boneAxis(leaf,undefined,[.3,0,0]).toArray(),[1,0,0]);assert.throws(()=>boneAxis(leaf,undefined,[0,0,0]));
   });
   await test('Clip rename changes only author name and roundtrips Undo Redo without changing sampler bytes', (_root,session)=>{
     const before=session.clips.map(clip=>({name:clip.name,tracks:clip.tracks.map(t=>[bytes(t.times),bytes(t.values)])}));

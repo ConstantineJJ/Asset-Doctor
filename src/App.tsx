@@ -86,6 +86,10 @@ export function App() {
   const unsavedRepairsRef = useRef(false);
   const rigSessionRef=useRef<RigEditSession|null>(null);
   const rigPublishedRevisionRef=useRef(0);
+  const undoOrderRef=useRef<('rig'|'heal')[]>([]);
+  const rigUndoingRef=useRef(false);
+  const knownHealActionsRef=useRef(new Set<string>());
+  const removeUndoDomain=(domain:'rig'|'heal')=>{const index=undoOrderRef.current.lastIndexOf(domain);if(index>=0)undoOrderRef.current.splice(index,1);};
   const rigExportServiceRef=useRef<RigExportService|null>(null);
   if(!rigExportServiceRef.current)rigExportServiceRef.current=new RigExportService();
   const rigExportResultRef=useRef<RigExportResult|null>(null);
@@ -511,6 +515,7 @@ export function App() {
         sceneManagerRef.current.setAsset(root, clips);
         rigSessionRef.current=sceneManagerRef.current.rigSession;
         rigPublishedRevisionRef.current=rigSessionRef.current?.revision??0;
+        undoOrderRef.current=[];knownHealActionsRef.current.clear();
         currentAnimationClipsRef.current=rigSessionRef.current?.clips??clips;
         setRigError(null);setRigVersion(value=>value+1);
       }
@@ -545,6 +550,7 @@ export function App() {
     setTreeRoot(buildSceneTree(root));setRigVersion(value=>value+1);
     if(rigPublishedRevisionRef.current===session.revision)return;
     rigPublishedRevisionRef.current=session.revision;
+    if(rigUndoingRef.current)removeUndoDomain('rig');else undoOrderRef.current.push('rig');
     currentAnimationClipsRef.current=session.clips;
     exportRequestRef.current++;exportResultRef.current=null;exportServiceRef.current?.cancelActive();
     setSavedExport(null);setExportReport(null);setExportError(null);
@@ -835,6 +841,7 @@ export function App() {
 
     sceneManagerRef.current?.cancelIssueInspection();
     setIsIssueFocusActive(false);
+    sceneManagerRef.current?.selectObject(null);
     setSelectedUuid(null);
     setSelectedNode(null);
     setTreeRoot(buildSceneTree(root));
@@ -880,7 +887,9 @@ export function App() {
     setSavedHealReport(report);
     setHealHistorical(false);
     const activeReports = engine.getActiveReports();
-    unsavedRepairsRef.current = activeReports.length > 0;
+    for(const active of activeReports)if(!knownHealActionsRef.current.has(active.operationId)){knownHealActionsRef.current.add(active.operationId);undoOrderRef.current.push('heal');}
+    if(report.undoneAt&&knownHealActionsRef.current.delete(report.operationId))removeUndoDomain('heal');
+    unsavedRepairsRef.current = activeReports.length > 0 || Boolean(rigSessionRef.current?.hasEdits);
     setActiveRepairReports(activeReports);
     setHealStorageFailed(!saveHealReport(report));
   };
@@ -1349,12 +1358,12 @@ export function App() {
   const handleSelectClip = (idx: number) => {
     if (!Number.isInteger(idx) || idx < 0 || idx >= animationClips.length) return;
     const manager = sceneManagerRef.current;
-    if (!manager || !manager.playAnimationClip(idx)) return;
+    if (!manager || rigDragging || healBusyRef.current || exportBusyRef.current || !manager.selectAnimationClip(idx)) return;
 
     setActiveClipIndex(idx);
     setAnimationTime(0);
     setAnimationDuration(animationClips[idx]?.duration ?? 0);
-    setIsPlayingAnimation(true);
+    setIsPlayingAnimation(rigSessionRef.current?.mode!=='edit');
   };
 
   const handleTogglePlayAnimation = () => {
@@ -1399,12 +1408,34 @@ export function App() {
     sceneManagerRef.current?.setRootMotionVisible(next);
   };
 
-  // Keyboard Shortcuts (F to frame, Space for animation play/pause, Z for wireframe toggle)
+  const handleRigAction=(action:(session:RigEditSession)=>void,undo=false)=>{
+    const session=rigSessionRef.current;
+    if(!session||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    setRigError(null);sceneManagerRef.current?.detachRigMixer();rigUndoingRef.current=undo;
+    try {action(session);sceneManagerRef.current?.syncRigClips();publishRigChange();}
+    catch(error){sceneManagerRef.current?.syncRigClips();setRigError(error instanceof Error?error.message:String(error));}
+    finally {rigUndoingRef.current=false;}
+  };
+  const handleUndoRig=()=>handleRigAction(session=>session.undo(),true);
+
+  // Ctrl+Z uses model histories; text fields retain their native text Undo.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) {
+      if(e.defaultPrevented||e.isComposing||e.target instanceof HTMLElement&&(e.target.isContentEditable||e.target.closest('input,textarea,select')))return;
+      if(e.ctrlKey&&!e.altKey&&!e.shiftKey&&(e.code==='KeyZ'||e.key.toLowerCase()==='z')) {
+        e.preventDefault();
+        if(e.repeat||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current||pendingAssetSwitch||isTestModalOpen||document.querySelector('[data-active-view="compare"]'))return;
+        const session=rigSessionRef.current,heal=healEngineRef.current;
+        while(undoOrderRef.current.length){
+          const domain=undoOrderRef.current.at(-1)!;
+          if(domain==='rig'&&session?.canUndo){handleUndoRig();return;}
+          if(domain==='heal'&&heal?.getUndoState().available){handleUndoHeal();return;}
+          undoOrderRef.current.pop();
+        }
+        if(session?.canUndo)handleUndoRig();else if(heal?.getUndoState().available)handleUndoHeal();
         return;
       }
+      if(e.ctrlKey||e.metaKey||e.altKey)return;
       if (e.key === 'f' || e.key === 'F') {
         handleFrameAll();
       } else if (e.key === ' ') {
@@ -1416,10 +1447,10 @@ export function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [renderMode]);
+  });
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#131518] text-gray-100 overflow-hidden font-sans select-none">
+    <div className="asset-doctor-ui flex flex-col h-screen w-screen bg-[#131518] text-gray-100 overflow-hidden font-sans select-none">
       {/* Top Application Toolbar */}
       <TopToolbar
         onPickFile={isDesktop() ? handlePickFile : undefined}
@@ -1492,6 +1523,7 @@ export function App() {
 
         {/* Right: Technical Inspector & Diagnostic Panel */}
         <InspectorPanel
+          animationClips={animationClips} activeClipIndex={activeClipIndex} onSelectClip={handleSelectClip} animationBusy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} clipSourceKey={rigSessionRef.current?.root.uuid??fileName}
           rigEditor={<RigEditorPanel session={rigSessionRef.current} selectedUuid={selectedUuid} settings={rigSettings} activeClipIndex={activeClipIndex} busy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} enabled={currentExportSourceRef.current?.kind==='buffer' && /\.glb$/i.test(fileName)} error={rigError} exportResult={rigExportResult} onVerifyExport={()=>void handleRigExport(false)} onSaveExport={()=>void handleRigExport(true)}
             onPreview={(uuid,quaternion)=>{setRigError(null);try{sceneManagerRef.current?.previewRigRotation(uuid,quaternion);}catch(error){setRigError(error instanceof Error?error.message:String(error));}}}
             onMode={(mode:RigMode)=>{
@@ -1503,7 +1535,7 @@ export function App() {
               }catch(error){setRigError(error instanceof Error?error.message:String(error));}
             }}
             onSettings={settings=>{setRigSettings(settings);sceneManagerRef.current?.setRigGizmoSettings(settings);}}
-            onAction={action=>{const session=rigSessionRef.current;if(!session)return;setRigError(null);sceneManagerRef.current?.detachRigMixer();try{action(session);sceneManagerRef.current?.syncRigClips();publishRigChange();}catch(error){sceneManagerRef.current?.syncRigClips();setRigError(error instanceof Error?error.message:String(error));}}}
+            onAction={handleRigAction} onUndo={handleUndoRig}
           />}
           summary={summary}
           healthIssues={healthIssues}
@@ -1610,6 +1642,7 @@ export function App() {
               </button>
               <button
                 onClick={() => { void handleDiscardAndSwitch(); }}
+                data-tone="danger"
                 disabled={exportBusy}
                 className="rounded border border-rose-800/70 bg-rose-950/35 px-3 py-2 text-xs text-rose-200 hover:bg-rose-950/55 disabled:opacity-50"
               >

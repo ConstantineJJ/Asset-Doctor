@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {createPortal} from 'react-dom';
 import {
   Box,
   ChevronDown,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import type { LightingPreset, RenderMode, SurfaceType } from '../types';
 import { useI18n } from '../i18n';
+import {version as appVersion} from '../../package.json';
 
 interface TopToolbarProps {
   onPickFile?: () => void;
@@ -89,13 +91,15 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sampleMenuRef = useRef<HTMLDivElement>(null);
+  const samplePopupRef=useRef<HTMLDivElement>(null);
+  const [samplePosition,setSamplePosition]=useState({left:8,top:52});
   const [sampleMenuOpen, setSampleMenuOpen] = useState(false);
   const { language, setLanguage, t } = useI18n();
 
   useEffect(() => {
     if (!sampleMenuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!sampleMenuRef.current?.contains(event.target as Node)) setSampleMenuOpen(false);
+      if (!sampleMenuRef.current?.contains(event.target as Node)&&!samplePopupRef.current?.contains(event.target as Node)) setSampleMenuOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setSampleMenuOpen(false);
@@ -107,6 +111,12 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [sampleMenuOpen]);
+  useLayoutEffect(()=>{
+    if(!sampleMenuOpen)return;
+    const place=()=>{const rect=sampleMenuRef.current?.getBoundingClientRect();if(rect)setSamplePosition({left:Math.max(8,Math.min(rect.left,window.innerWidth-296)),top:rect.bottom+4});};
+    place();window.addEventListener('resize',place);window.addEventListener('scroll',place,true);
+    return()=>{window.removeEventListener('resize',place);window.removeEventListener('scroll',place,true);};
+  },[sampleMenuOpen]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) {
@@ -144,13 +154,14 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 
         <div className="flex items-center gap-2 pr-2 border-r border-[#2d313a]">
           <img
-            src="/asset-doctor-icon.svg"
+            src="/asset-doctor-icon.png"
             alt="Asset Doctor"
             className="w-6 h-6 object-contain shadow-sm"
           />
           <span className="font-bold tracking-tight text-gray-100 hidden xl:inline text-sm">
             Asset <span className="text-cyan-400 font-light">Doctor</span>
           </span>
+          <span data-testid="app-version" className="font-mono text-green-200 font-semibold" title={`Asset Doctor ${appVersion}`}>{appVersion}</span>
         </div>
 
         <button
@@ -187,8 +198,8 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             <span className="hidden lg:inline">{t('toolbar.samples')}</span>
             <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${sampleMenuOpen ? 'rotate-180' : ''}`} />
           </button>
-          {sampleMenuOpen && (
-            <div role="menu" className="absolute left-0 top-full mt-1 w-72 bg-[#1e2127] border border-[#333742] rounded-md shadow-xl py-1 z-50">
+          {sampleMenuOpen && createPortal(
+            <div ref={samplePopupRef} role="menu" style={samplePosition} className="asset-doctor-ui fixed w-72 bg-[#1e2127] border border-[#687787] rounded-md shadow-xl py-1 z-[100]">
               <div className="px-3 py-1 text-[10px] uppercase font-semibold text-gray-400 border-b border-[#2d313a]">
                 {t('toolbar.builtInModels')}
               </div>
@@ -204,7 +215,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                 <span className="text-[10px] leading-relaxed text-gray-400">{t('toolbar.testPatientDescription')}</span>
               </button>
             </div>
-          )}
+          ,document.body)}
         </div>
 
         <button
@@ -333,6 +344,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
         <div className="flex items-center bg-[#1e2127] p-0.5 rounded border border-[#2d313a]">
           <button
             onClick={() => onToggleHelper('grid')}
+            aria-pressed={toggles.grid}
             className={`px-1.5 py-1 rounded transition ${toggles.grid ? 'bg-blue-600/30 text-blue-400 font-bold' : 'text-gray-400 hover:text-gray-200'}`}
             title="Toggle Ground Grid"
           >
@@ -340,6 +352,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           </button>
           <button
             onClick={() => onToggleHelper('bbox')}
+            aria-pressed={toggles.bbox}
             className={`px-1.5 py-1 rounded transition ${toggles.bbox ? 'bg-amber-600/30 text-amber-400 font-bold' : 'text-gray-400 hover:text-gray-200'}`}
             title="Toggle Bounding Box"
           >
@@ -347,6 +360,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           </button>
           <button
             onClick={() => onToggleHelper('skeleton')}
+            aria-pressed={toggles.skeleton}
             className={`px-1.5 py-1 rounded transition ${toggles.skeleton ? 'bg-purple-600/30 text-purple-400 font-bold' : 'text-gray-400 hover:text-gray-200'}`}
             title="Toggle Skeletal Armature"
           >
@@ -354,6 +368,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           </button>
           <button
             onClick={onToggleAutoRotate}
+            aria-pressed={autoRotate}
             className={`px-1.5 py-1 rounded transition ${autoRotate ? 'bg-cyan-600/30 text-cyan-400 font-bold' : 'text-gray-400 hover:text-gray-200'}`}
             title={language === 'ru' ? 'Вращение модели вокруг своей оси' : 'Turntable auto-rotate model'}
           >

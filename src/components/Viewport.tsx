@@ -132,6 +132,7 @@ export const Viewport: React.FC<ViewportProps> = ({
   return (
     <div
       ref={containerRef}
+      data-active-view={compareOpen?'compare':'doctor'}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -250,13 +251,14 @@ export const Viewport: React.FC<ViewportProps> = ({
         </div>
       )}
 
-      {/* Bottom Center: Model Axis Rotation & Turntable Control Bar */}
+      {/* Model presentation is separate from bottom animation transport. */}
       {fileName && !compareOpen && onSetModelRotation && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-[#181a20]/90 backdrop-blur-md border border-[#2d313c] px-3 py-1.5 rounded-full shadow-2xl text-xs text-gray-200">
+        <div data-testid="model-rotation-controls" className="absolute top-14 left-3 z-20 flex flex-wrap max-w-[calc(100%_-_1.5rem)] items-center gap-2 bg-[#181a20]/95 border border-[#58626e] px-2 py-1.5 rounded text-xs text-gray-200">
           {/* Turntable Auto-Rotate Play/Pause */}
           {onToggleAutoRotate && (
             <button
               onClick={onToggleAutoRotate}
+              aria-pressed={autoRotate}
               className={`p-1.5 rounded-full transition cursor-pointer flex items-center justify-center ${
                 autoRotate
                   ? 'bg-cyan-500 text-black font-bold shadow-md shadow-cyan-500/30'
@@ -268,15 +270,15 @@ export const Viewport: React.FC<ViewportProps> = ({
                   : (language === 'ru' ? 'Запустить авто-вращение модели вокруг оси' : 'Start turntable auto-rotation')
               }
             >
-              {autoRotate ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+              <RotateCw className="w-3.5 h-3.5" /><span className="ml-1.5">{autoRotate?(language==='ru'?'Пауза вращения':'Pause Rotation'):(language==='ru'?'Автовращение':'Auto Rotate')}</span>
             </button>
           )}
 
           {/* Model Axis Rotation Header & Angle badge */}
           <div className="flex items-center gap-1.5 pl-1 pr-2 border-r border-[#2d313c]">
             <RotateCw className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span className="text-[11px] font-medium hidden md:inline text-gray-300">
-              {language === 'ru' ? 'Ось Y:' : 'Axis Y:'}
+            <span className="text-[11px] font-medium text-gray-300">
+              {language === 'ru' ? 'Модель · Y:' : 'Model · Y:'}
             </span>
             <span className="font-mono text-[11px] font-bold text-cyan-300 w-10 text-right">
               {Math.round(modelRotation)}°
@@ -325,6 +327,7 @@ export const Viewport: React.FC<ViewportProps> = ({
               {[0.5, 1.0, 2.0].map((spd) => (
                 <button
                   key={spd}
+                  aria-pressed={autoRotateSpeed===spd}
                   onClick={() => onSetAutoRotateSpeed(spd)}
                   className={`px-1 py-0.5 rounded text-[9px] font-mono cursor-pointer ${
                     autoRotateSpeed === spd

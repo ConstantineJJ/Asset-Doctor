@@ -300,6 +300,12 @@ export class SceneManager {
     // Viewport click selection & light bulb drag
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      // A visible different joint wins over an overlapping handle. Capture runs
+      // before TransformControls; axis drags away from joints remain unchanged.
+      const joint=this.pickJointAtPointer(e,this.renderer.domElement.getBoundingClientRect());
+      if(!this.rigInteractionBlocked && !this.rigGizmo?.controls.dragging && joint && joint.uuid!==this.selectedMeshUuid) {
+        this.selectObject(joint.uuid);e.preventDefault();e.stopImmediatePropagation();return;
+      }
       if(this.rigGizmo?.active) return;
 
       const rect = this.renderer.domElement.getBoundingClientRect();
@@ -365,7 +371,7 @@ export class SceneManager {
         }
       };
       window.addEventListener('pointerup', onPointerUp);
-    });
+    },true);
   }
 
   private handleViewportClick(e: PointerEvent) {
@@ -437,13 +443,7 @@ export class SceneManager {
     const pointer = new THREE.Vector2(e.clientX, e.clientY);
     const thresholdPx = 11;
     // At a chain junction select the visible joint, rather than an incident link.
-    let nearestJoint:THREE.Bone|null=null, jointDistance=8;
-    for(const joint of this.inspectedBones) {
-      const projected=this.projectWorldToCanvas(joint.getWorldPosition(new THREE.Vector3()),rect);
-      if(!projected) continue;
-      const distance=pointer.distanceTo(projected.point);
-      if(distance<jointDistance) {nearestJoint=joint;jointDistance=distance;}
-    }
+    const nearestJoint=this.pickJointAtPointer(e,rect);
     if(nearestJoint) return nearestJoint;
     let bestBone: THREE.Bone | null = null;
     let bestDistance = Number.POSITIVE_INFINITY;
@@ -486,6 +486,17 @@ export class SceneManager {
     });
 
     return bestBone;
+  }
+  private pickJointAtPointer(e:PointerEvent,rect:DOMRect):THREE.Bone|null {
+    if(!this.currentAssetRoot || !this.isSkeletonVisible)return null;
+    this.currentAssetRoot.updateMatrixWorld(true);
+    const pointer=new THREE.Vector2(e.clientX,e.clientY);
+    let nearest:THREE.Bone|null=null,distance=8,depth=Infinity;
+    for(const joint of this.inspectedBones) {
+      const projected=this.projectWorldToCanvas(joint.getWorldPosition(new THREE.Vector3()),rect);if(!projected)continue;
+      const current=pointer.distanceTo(projected.point);
+      if(current<distance-.25 || (Math.abs(current-distance)<=.25&&current<8&&projected.depth<depth)){nearest=joint;distance=current;depth=projected.depth;}
+    }return nearest;
   }
 
   public lastMeshDiagnostics: Array<Record<string, any>> = [];
@@ -762,6 +773,11 @@ export class SceneManager {
     this.callbacks.onAnimationTimeUpdate?.(0, clip.duration);
     this.callbacks.onAnimationPlaybackStateChange?.(true);
     return true;
+  }
+  public selectAnimationClip(clipIndex:number):boolean {
+    if(!Number.isInteger(clipIndex)||!this.animationClips[clipIndex])return false;
+    if(this.rigSession?.mode!=='edit')return this.playAnimationClip(clipIndex);
+    this.activeClipIndex=clipIndex;this.callbacks.onAnimationTimeUpdate?.(0,this.animationClips[clipIndex].duration);return true;
   }
 
   public toggleAnimationPlay(play?: boolean) {
@@ -1752,7 +1768,7 @@ export class SceneManager {
       this.updateOrientationWidget();
 
       // Handle Turntable model auto-rotation around its axis
-      if (this.isAutoRotating && this.presentationWrapper) {
+      if (this.isAutoRotating && this.presentationWrapper && !this.rigGizmo.active) {
         this.modelRotationY += this.autoRotateSpeed * 0.015;
         if (this.modelRotationY > Math.PI * 2) this.modelRotationY -= Math.PI * 2;
         this.presentationWrapper.rotation.y = this.modelRotationY;

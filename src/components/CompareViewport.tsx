@@ -729,6 +729,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
                 }}
                 className="rounded p-0.5 text-gray-500 hover:bg-rose-950/50 hover:text-rose-300"
                 title="Удалить из сравнения"
+                data-tone="danger"
               >
                 <X className="h-3 w-3" />
               </span>

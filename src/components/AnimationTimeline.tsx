@@ -77,14 +77,16 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
 
   return (
     <div className="h-12 bg-[#17191e] border-t border-[#262932] px-4 flex items-center justify-between text-xs text-gray-200 select-none shrink-0 z-20">
-      <div className="flex items-center space-x-3 min-w-[200px]">
-        <div className="flex items-center space-x-1.5 bg-[#1f2228] px-2 py-1 rounded border border-[#2d313a]">
+      <div className="flex items-center space-x-2 w-[30%] min-w-0">
+        <div className="flex items-center gap-1.5 w-full min-w-0 bg-[#1f2228] px-2 py-1 rounded border border-[#2d313a]">
           <Film className="w-3.5 h-3.5 text-purple-400" />
           <select
             id="select-animation-clip"
+            aria-label="Animation clip"
+            title={activeClip?.name}
             value={activeClipIndex}
             onChange={(e) => onSelectClip(Number(e.target.value))}
-            className="bg-transparent text-gray-200 text-xs focus:outline-none cursor-pointer font-medium"
+            className="min-w-0 w-full truncate text-gray-200 text-xs cursor-pointer font-medium"
           >
             {clips.map((clip, idx) => (
               <option key={`${idx}:${clip.name}`} value={idx} className="bg-[#1f2228]">
@@ -117,8 +119,8 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
         )}
       </div>
 
-      <div className="flex items-center space-x-3 flex-1 max-w-xl mx-4">
-        <div className="flex items-center space-x-1">
+      <div className="flex items-center space-x-2 min-w-0 flex-1 max-w-xl mx-2">
+        <div className="flex items-center space-x-1 shrink-0">
           <button
             onClick={() => onStepFrame(false)}
             className="p-1 hover:bg-[#282c35] rounded text-gray-400 hover:text-white"
@@ -145,6 +147,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
 
           <button
             onClick={onStop}
+            data-tone="danger"
             className="p-1 hover:bg-[#282c35] rounded text-gray-400 hover:text-white"
             title="Stop & Reset"
           >
@@ -161,6 +164,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
 
           <button
             onClick={onToggleLoop}
+            aria-pressed={isLooping}
             className={`p-1 rounded ${
               isLooping ? 'text-cyan-400 hover:bg-[#282c35]' : 'text-gray-400 hover:text-white'
             }`}
@@ -170,7 +174,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center space-x-2 flex-1">
+        <div className="flex items-center space-x-2 flex-1 min-w-0">
           <span className="font-mono text-[10px] text-gray-400 w-10 text-right">
             {currentTime.toFixed(2)}s
           </span>
@@ -182,7 +186,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
             step="0.001"
             value={progress}
             onInput={(e) => onSeek(Number((e.target as HTMLInputElement).value))}
-            className="flex-1 h-1.5 accent-cyan-400 cursor-pointer bg-[#262932] rounded"
+            className="flex-1 min-w-0 h-1.5 accent-green-400 cursor-pointer bg-[#262932] rounded"
           />
           <span className="font-mono text-[10px] text-gray-400 w-10">
             {duration.toFixed(2)}s
@@ -196,6 +200,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
           {speeds.map((s) => (
             <button
               key={s}
+              aria-pressed={speed===s}
               onClick={() => onSetSpeed(s)}
               className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition ${
                 speed === s

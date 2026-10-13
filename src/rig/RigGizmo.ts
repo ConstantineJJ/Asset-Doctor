@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { RigEditSession, type ChildPolicy } from './RigEditSession';
+import { boneAxis } from './RigAxis';
 
-export interface RigGizmoSettings {tool:'translate'|'rotate';space:'local'|'world';target:'joint'|'end';childPolicy:ChildPolicy;endChildUuid?:string}
+export interface RigGizmoSettings {tool:'select'|'translate'|'rotate'|'twist';space:'local'|'world';target:'joint'|'end';childPolicy:ChildPolicy;endChildUuid?:string}
 
 /** Viewer-owned controls never become authored children or GLB extras. */
 export class RigGizmo {
@@ -16,13 +17,16 @@ export class RigGizmo {
   private leaf:THREE.Bone|null=null;
   private dragWorldScale=new THREE.Vector3();
   private failure:Error|null=null;
+  private rotationOffset=new THREE.Quaternion();
+  private clearHover=()=>{if(!this.controls.dragging)this.controls.axis=null;};
 
-  constructor(scene:THREE.Scene,camera:THREE.Camera,canvas:HTMLElement,private callbacks:{drag:(active:boolean)=>void;changed:()=>void;error:(message:string)=>void}) {
+  constructor(scene:THREE.Scene,camera:THREE.Camera,private canvas:HTMLElement,private callbacks:{drag:(active:boolean)=>void;changed:()=>void;error:(message:string)=>void}) {
     this.controls=new TransformControls(camera,canvas);
+    canvas.addEventListener('pointerleave',this.clearHover);
     const helper=this.controls.getHelper(); helper.name='__ascope_internal_rig_gizmo';
     this.proxy.name='__ascope_internal_rig_proxy'; this.guide.name='__ascope_internal_rig_tip'; this.guide.renderOrder=1001;
     scene.add(helper,this.proxy,this.guide);
-    this.controls.setSize(.8);
+    this.controls.setSize(.55);
     this.controls.addEventListener('mouseDown',()=>{
       this.failure=null;
       this.target?.getWorldScale(this.dragWorldScale);
@@ -50,7 +54,7 @@ export class RigGizmo {
     if(this.controls.dragging) return;
     this.controls.detach(); this.guide.visible=false; this.target=null;this.leaf=null;
     const session=this.session,bone=session?.root.getObjectByProperty('uuid',this.selected??'');
-    if(!session || !(bone instanceof THREE.Bone) || session.mode==='inspect') return;
+    if(!session || !(bone instanceof THREE.Bone) || session.mode==='inspect' || this.settings.tool==='select') return;
     session.root.updateWorldMatrix(true,true);
     let target=bone;
     if(this.settings.target==='end' && session.mode==='edit') {
@@ -61,14 +65,21 @@ export class RigGizmo {
     }
     this.target=target;
     target.getWorldPosition(this.proxy.position); target.getWorldQuaternion(this.proxy.quaternion); this.proxy.scale.set(1,1,1);
+    this.rotationOffset.identity();
+    const twist=this.settings.tool==='twist';
+    if(twist) {
+      try {this.alignTwist();} catch(error) {this.target=null;this.callbacks.error(error instanceof Error?error.message:String(error));return;}
+    }
     if(this.leaf) {
       this.proxy.position.copy(new THREE.Vector3().fromArray(session.getTerminalTip(bone.uuid)??[0,.2,0]).applyMatrix4(bone.matrixWorld));
       this.guide.geometry.dispose();
       this.guide.geometry=new THREE.BufferGeometry().setFromPoints([bone.getWorldPosition(new THREE.Vector3()),this.proxy.position.clone()]); this.guide.visible=true;
     }
     this.proxy.updateMatrixWorld(true);
-    this.controls.setMode(session.mode==='pose'?'rotate':this.settings.target==='end'?'translate':this.settings.tool);
-    this.controls.setSpace(this.settings.space); this.controls.enabled=true; this.controls.attach(this.proxy);
+    this.controls.setMode(twist||session.mode==='pose'?'rotate':this.settings.target==='end'?'translate':this.settings.tool==='rotate'?'rotate':'translate');
+    this.controls.showX=!twist;this.controls.showY=true;this.controls.showZ=!twist;
+    this.controls.showE=false;this.controls.showXYZE=false;
+    this.controls.setSpace(twist?'local':this.settings.space); this.controls.enabled=true; this.controls.attach(this.proxy);
   }
   private change() {
     const session=this.session,target=this.target;
@@ -80,7 +91,8 @@ export class RigGizmo {
       const position=this.proxy.position.clone().applyMatrix4(parent.clone().invert());
       let quaternion=target.quaternion.clone();
       if(this.controls.mode==='rotate') {
-        const world=new THREE.Matrix4().compose(target.getWorldPosition(new THREE.Vector3()),this.proxy.quaternion,this.dragWorldScale);
+        const orientation=this.proxy.quaternion.clone().multiply(this.rotationOffset.clone().invert());
+        const world=new THREE.Matrix4().compose(target.getWorldPosition(new THREE.Vector3()),orientation,this.dragWorldScale);
         const local=parent.clone().invert().multiply(world),scale=new THREE.Vector3();
         local.decompose(new THREE.Vector3(),quaternion,scale);
         const rebuilt=new THREE.Matrix4().compose(target.position,quaternion,scale);
@@ -97,9 +109,19 @@ export class RigGizmo {
     if(Math.abs(this.leaf.matrixWorld.determinant())<1e-10)throw new Error('Singular terminal-guide transform.');
     this.session.setTerminalTip(this.leaf.uuid,this.proxy.position.clone().applyMatrix4(this.leaf.matrixWorld.clone().invert()).toArray());
   }
+  private alignTwist() {
+    const target=this.target!,orientation=target.getWorldQuaternion(new THREE.Quaternion());
+    const local=boneAxis(target,this.settings.endChildUuid,this.session?.getTerminalTip(target.uuid));
+    const direction=local.transformDirection(target.matrixWorld);
+    this.proxy.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction);
+    this.rotationOffset.copy(orientation).invert().multiply(this.proxy.quaternion);
+  }
   update() {
     if(this.controls.dragging || !this.controls.object || !this.target)return;
     this.target.getWorldPosition(this.proxy.position);this.target.getWorldQuaternion(this.proxy.quaternion);
+    if(this.settings.tool==='twist') {
+      try {this.alignTwist();} catch(error) {this.controls.detach();this.callbacks.error(error instanceof Error?error.message:String(error));return;}
+    }
     if(this.leaf&&this.session){
       const start=this.proxy.position.clone();
       this.proxy.position.copy(new THREE.Vector3().fromArray(this.session.getTerminalTip(this.leaf.uuid)??[0,.2,0]).applyMatrix4(this.leaf.matrixWorld));
@@ -108,6 +130,7 @@ export class RigGizmo {
     this.proxy.updateMatrixWorld(true);
   }
   dispose() {
+    this.canvas.removeEventListener('pointerleave',this.clearHover);
     this.session?.cancelGesture(); this.controls.getHelper().removeFromParent();this.controls.dispose();this.proxy.removeFromParent();this.guide.removeFromParent();this.guide.geometry.dispose();(this.guide.material as THREE.Material).dispose();
   }
 }

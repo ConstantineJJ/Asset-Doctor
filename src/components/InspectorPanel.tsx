@@ -54,8 +54,11 @@ import {
 import { getRepairOperationForIssue } from '../heal/framework/RepairRegistry';
 import { buildRepairQueueCandidates } from '../heal/RepairQueue';
 import { HealReportPanel } from './HealReportPanel';
+import { AnimationClipList } from './AnimationClipList';
+import type {AnimationClipInfo} from '../types';
 
 interface InspectorPanelProps {
+  animationClips:AnimationClipInfo[];activeClipIndex:number;onSelectClip:(index:number)=>void;animationBusy:boolean;clipSourceKey:string;
   rigEditor?:React.ReactNode;
   summary: AssetSummary | null;
   healthIssues: HealthIssue[];
@@ -108,6 +111,7 @@ interface InspectorPanelProps {
 }
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
+  animationClips,activeClipIndex,onSelectClip,animationBusy,clipSourceKey,
   rigEditor,
   summary,
   healthIssues,
@@ -371,7 +375,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       {/* Inspector Tabs */}
       <div className="h-10 px-2 border-b border-[#262932] grid grid-cols-5 gap-1 items-center bg-[#1a1c22]">
         <button
-          onClick={() => setActiveTab('health')}
+          aria-pressed={activeTab === 'health'} onClick={() => setActiveTab('health')}
           className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'health'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
@@ -388,7 +392,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('summary')}
+          aria-pressed={activeTab === 'summary'} onClick={() => setActiveTab('summary')}
           className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'summary'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
@@ -400,7 +404,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('materials')}
+          aria-pressed={activeTab === 'materials'} onClick={() => setActiveTab('materials')}
           className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'materials'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
@@ -412,7 +416,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('skeleton')}
+          aria-pressed={activeTab === 'skeleton'} onClick={() => setActiveTab('skeleton')}
           className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'skeleton'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
@@ -424,7 +428,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('performance')}
+          aria-pressed={activeTab === 'performance'} onClick={() => setActiveTab('performance')}
           className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'performance'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
@@ -1239,6 +1243,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-[#2b2f38]">
               <button
                 onClick={() => onSetSkeletonVisible(!skeletonVisible)}
+                aria-pressed={skeletonVisible}
                 className={`px-2 py-1 rounded border text-[10px] cursor-pointer ${
                   skeletonVisible
                     ? 'border-cyan-700 bg-cyan-950/30 text-cyan-300'
@@ -1311,55 +1316,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </div>
           )}
 
-          {summary.clips && summary.clips.length > 0 && (
-            <div className="space-y-1.5">
-              <h4 className="font-semibold text-gray-300 uppercase tracking-wider text-[10px]">
-                Clips & Root Motion
-              </h4>
-              {summary.clips.map((clip, clipIndex) => (
-                <div
-                  key={`${clipIndex}:${clip.name}`}
-                  className="p-2 rounded bg-[#1c1e24] border border-[#2c3039] space-y-1"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-gray-100">{clip.name}</span>
-                    <span className="text-gray-400 font-mono text-[10px]">
-                      {clip.duration.toFixed(2)}s
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-[10px] font-mono">
-                    <span
-                      className={`px-1.5 py-0.5 rounded ${
-                        clip.rootMotionDetected
-                          ? 'bg-purple-950/70 border border-purple-800 text-purple-300'
-                          : 'bg-[#16181d] text-gray-400'
-                      }`}
-                    >
-                      {clip.rootMotionDetected
-                        ? `ROOT TRANSLATION: ${clip.rootMotionTranslation}m`
-                        : 'NO SIGNIFICANT ROOT MOTION'}
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded bg-[#16181d] text-gray-400">
-                      TRACKS: {clip.trackCount}
-                    </span>
-                  </div>
-                  <div className="text-[9px] text-gray-500 font-mono space-y-0.5">
-                    <div>Root rotation delta: {clip.rootMotionRotation ?? 0}°</div>
-                    {clip.rootMotionDelta && (
-                      <div>
-                        Translation vector: [{clip.rootMotionDelta.map((value) => value.toFixed(3)).join(', ')}]
-                      </div>
-                    )}
-                    {clip.rootMotionTrackName && (
-                      <div className="truncate" title={clip.rootMotionTrackName}>
-                        Track: {clip.rootMotionTrackName}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {animationClips.length>0&&<AnimationClipList key={clipSourceKey} clips={animationClips} activeIndex={activeClipIndex} onSelect={onSelectClip} busy={animationBusy}/>}
         </div>
       )}
 

@@ -85,6 +85,7 @@ export function HealReportPanel({
           {historical && (
             <button
               onClick={onClearHistory}
+              data-tone="danger"
               className="p-0.5 text-gray-400 hover:text-rose-300 cursor-pointer"
               title={t('heal.clearHistory')}
             >
