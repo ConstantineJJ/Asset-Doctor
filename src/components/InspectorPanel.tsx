@@ -1243,17 +1243,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     : 'border-[#343944] bg-[#202329] text-gray-300'
                 }`}
               >
-                Skeleton Overlay {skeletonVisible ? 'ON' : 'OFF'}
-              </button>
-              <button
-                onClick={() => onSetSkeletonXray(!skeletonXray)}
-                className={`px-2 py-1 rounded border text-[10px] cursor-pointer ${
-                  skeletonXray
-                    ? 'border-violet-700 bg-violet-950/30 text-violet-300'
-                    : 'border-[#343944] bg-[#202329] text-gray-300'
-                }`}
-              >
-                X-Ray {skeletonXray ? 'ON' : 'OFF'}
+                <Zap className="w-3 h-3 inline mr-1" />
+                Skeleton X-Ray {skeletonVisible ? 'ON' : 'OFF'}
               </button>
               <button
                 onClick={onResetPreviewPose}

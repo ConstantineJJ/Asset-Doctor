@@ -676,7 +676,10 @@ export function App() {
       if (helper === 'grid') sceneManagerRef.current?.toggleGrid(next.grid);
       if (helper === 'axes') sceneManagerRef.current?.toggleAxes(next.axes);
       if (helper === 'bbox') sceneManagerRef.current?.toggleBbox(next.bbox);
-      if (helper === 'skeleton') sceneManagerRef.current?.toggleSkeleton(next.skeleton);
+      if (helper === 'skeleton') {
+        sceneManagerRef.current?.toggleSkeleton(next.skeleton);
+        setSkeletonXray(next.skeleton);
+      }
       if (helper === 'origin') sceneManagerRef.current?.toggleOrigin(next.origin);
       return next;
     });
@@ -689,6 +692,7 @@ export function App() {
 
   const handleSetSkeletonVisible = (visible: boolean) => {
     setToggles((prev) => ({ ...prev, skeleton: visible }));
+    setSkeletonXray(visible);
     sceneManagerRef.current?.toggleSkeleton(visible);
   };
 

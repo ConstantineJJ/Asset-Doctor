@@ -53,6 +53,9 @@ export class SceneManager {
   private bboxHelper: THREE.Box3Helper | null = null;
   private originHelper: THREE.Group | null = null;
   private skeletonHelper: THREE.SkeletonHelper | null = null;
+  private skeletonJoints: THREE.InstancedMesh | null = null;
+  private inspectedBones: THREE.Bone[] = [];
+  private assetDiagonal = 0;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
   private selectedBoneMarker: THREE.Mesh | null = null;
   private rootMotionHelper: THREE.Group | null = null;
@@ -605,6 +608,7 @@ export class SceneManager {
 
     // Recalculate final bounds
     const finalBounds = BoundsCalculator.computeAccurateWorldBounds(assetRoot);
+    this.assetDiagonal = finalBounds.box.getSize(new THREE.Vector3()).length();
 
     // Recreate bounding box helper with final bounds
     if (!finalBounds.box.isEmpty()) {
@@ -632,6 +636,20 @@ export class SceneManager {
     this.skeletonHelper.frustumCulled = false;
     this.applySkeletonXrayMaterial();
     this.scene.add(this.skeletonHelper);
+    assetRoot.traverse(node => { if ((node as THREE.Bone).isBone) this.inspectedBones.push(node as THREE.Bone); });
+    if (this.inspectedBones.length) {
+      this.skeletonJoints = new THREE.InstancedMesh(
+        new THREE.SphereGeometry(1, 10, 8),
+        new THREE.MeshBasicMaterial({color:0xa78bfa,depthTest:false,depthWrite:false}),
+        this.inspectedBones.length
+      );
+      this.skeletonJoints.name = '__ascope_internal_skeleton_joints';
+      this.skeletonJoints.visible = this.isSkeletonVisible;
+      this.skeletonJoints.frustumCulled = false;
+      this.skeletonJoints.renderOrder = 999;
+      this.scene.add(this.skeletonJoints);
+      this.updateSkeletonJoints();
+    }
 
     // 5. Animations setup
     this.animationClips = clips;
@@ -1007,10 +1025,19 @@ export class SceneManager {
   }
 
   private getAssetDiagonal(): number {
-    if (!this.currentAssetRoot) return 0;
-    const bounds = BoundsCalculator.computeAccurateWorldBounds(this.currentAssetRoot);
-    if (!bounds.isValid || bounds.box.isEmpty()) return 0;
-    return bounds.box.getSize(new THREE.Vector3()).length();
+    return this.assetDiagonal;
+  }
+
+  private updateSkeletonJoints() {
+    if (!this.skeletonJoints?.visible) return;
+    const position = new THREE.Vector3(), matrix = new THREE.Matrix4();
+    const radius = Math.max(this.assetDiagonal * 0.0045, 0.003);
+    this.inspectedBones.forEach((bone,index) => {
+      bone.getWorldPosition(position);
+      matrix.makeScale(radius,radius,radius).setPosition(position);
+      this.skeletonJoints!.setMatrixAt(index,matrix);
+    });
+    this.skeletonJoints.instanceMatrix.needsUpdate = true;
   }
 
   private getBoneSpan(bone: THREE.Bone): number {
@@ -1518,6 +1545,8 @@ export class SceneManager {
   public toggleSkeleton(visible?: boolean) {
     this.isSkeletonVisible = visible !== undefined ? visible : !this.isSkeletonVisible;
     if (this.skeletonHelper) this.skeletonHelper.visible = this.isSkeletonVisible;
+    if (this.skeletonJoints) this.skeletonJoints.visible = this.isSkeletonVisible;
+    if (this.isSkeletonVisible) this.setSkeletonXray(true);
   }
 
   public setSkeletonXray(enabled: boolean) {
@@ -1682,6 +1711,7 @@ export class SceneManager {
         this.selectionBoxHelper.update();
       }
       this.updateSelectedBoneMarker();
+      this.updateSkeletonJoints();
 
       this.renderer.render(this.scene, this.camera);
 
@@ -1720,6 +1750,14 @@ export class SceneManager {
       this.skeletonHelper.dispose();
       this.skeletonHelper = null;
     }
+    if (this.skeletonJoints) {
+      this.scene.remove(this.skeletonJoints);
+      this.skeletonJoints.geometry.dispose();
+      (this.skeletonJoints.material as THREE.Material).dispose();
+      this.skeletonJoints = null;
+    }
+    this.inspectedBones = [];
+    this.assetDiagonal = 0;
 
     if (this.selectionBoxHelper) {
       this.scene.remove(this.selectionBoxHelper);
