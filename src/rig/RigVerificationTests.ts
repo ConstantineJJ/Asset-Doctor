@@ -19,13 +19,14 @@ function encode(document:any,binary:Uint8Array) {
 
 export async function runRigVerificationTests() {
   const results:{name:string;passed:boolean;actual?:string;expected?:string}[]=[];
-  for(const scenario of ['linear/step/cubic worker deformation','morph worker deformation','corrupted original source bytes','corrupted edited skin IBM','corrupted replacement skin weights','removed active stream metadata','corrupted authored rest']) {
+  for(const scenario of ['linear/step/cubic worker deformation','morph worker deformation','renamed clips','corrupted clip name','corrupted original source bytes','corrupted edited skin IBM','corrupted replacement skin weights','removed active stream metadata','corrupted authored rest']) {
     const loader=new GLBLoaderService();let root:THREE.Group|undefined,expected:THREE.Group|undefined;
     try {
       const fixture=rigFixture({morphWeights:scenario.includes('morph')});
       const loaded=await loader.loadFromArrayBuffer(fixture.buffer,'rig.glb');root=loaded.root;
       const session=new RigEditSession(root,loaded.animations);session.enterEdit();
       session.commitJoint(root.getObjectByName('Root')!.uuid,{position:[1.4,2.1,.2],quaternion:new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),.2).toArray()});session.setClipDuration(2,7);
+      if(scenario.includes('clip'))session.renameClip(2,'Удар / Strike');
       const packet=buildRigExportPacket(session,fixture.buffer);
       if(scenario==='corrupted replacement skin weights') {
         let mesh:THREE.SkinnedMesh|undefined;root.traverse(node=>{if(node instanceof THREE.SkinnedMesh)mesh=node;});
@@ -51,13 +52,16 @@ export async function runRigVerificationTests() {
         if(scenario==='corrupted authored rest') {
           const {document,binary}=parseGlb(output);document.nodes[1].translation[0]+=.01;output=encode(document,binary);
         }
+        if(scenario==='corrupted clip name') {
+          const {document,binary}=parseGlb(output);document.animations[2].name='Lost name';output=encode(document,binary);
+        }
         if(scenario==='corrupted edited skin IBM') {
           const {document,binary}=parseGlb(output),accessor=document.accessors[document.skins[0].inverseBindMatrices],view=document.bufferViews[accessor.bufferView];
           new DataView(binary.buffer,binary.byteOffset+view.byteOffset+(accessor.byteOffset??0)).setFloat32(0,42,true);
         }
         const verification=await verifyEditedRig(packet,output,expected,clips,rigIdentities(root));
         if(scenario.startsWith('corrupted') || scenario==='removed active stream metadata') {
-          assert.equal(verification.status,'REGRESSION');assert.ok(verification.reasons.some(reason=>/Serialized replacement bytes|Active accessor author metadata|Serialized authored rest/.test(reason)));
+          assert.equal(verification.status,'REGRESSION');assert.ok(verification.reasons.some(reason=>/Serialized replacement bytes|Active accessor author metadata|Serialized authored rest|Animation name/.test(reason)));
         }
         else {
           assert.equal(verification.status,'VERIFIED',verification.reasons.join('; '));

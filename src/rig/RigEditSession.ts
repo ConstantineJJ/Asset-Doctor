@@ -69,7 +69,7 @@ export class RigEditSession {
   private signature(snapshot:RigSnapshot) {
     let signature=this.signatures.get(snapshot);
     if(signature===undefined) {
-      signature=JSON.stringify([[...snapshot.nodes],[...snapshot.tips],snapshot.clips.map(clip=>[clip.duration,clip.tracks.map(track=>[Array.from(track.times),Array.from(track.values)])])]);
+      signature=JSON.stringify([[...snapshot.nodes],[...snapshot.tips],snapshot.clips.map(clip=>[clip.name,clip.duration,clip.tracks.map(track=>[Array.from(track.times),Array.from(track.values)])])]);
       this.signatures.set(snapshot,signature);
     }
     return signature;
@@ -198,6 +198,13 @@ export class RigEditSession {
     if(!this.clips[index]) throw new Error('Unknown animation clip.');
     const changed=retimeClip(this.clips[index],seconds);
     this.transaction(()=>{const clips=this.clips.slice(); clips[index]=changed; this.authored={...this.authored,clips};});
+  }
+  renameClip(index:number,name:string) {
+    if(this.isGestureActive)throw new Error('Finish the joint drag before renaming a clip.');
+    if(!Number.isInteger(index)||!this.clips[index])throw new Error('Unknown animation clip.');
+    const trimmed=name.trim();
+    if(!trimmed || trimmed.length>256 || /[\u0000-\u001f\u007f]/.test(trimmed))throw new Error('Clip name must contain 1–256 printable characters.');
+    this.transaction(()=>{const clips=this.clips.slice();clips[index]=cloneClips([clips[index]])[0];clips[index].name=trimmed;this.authored={...this.authored,clips};});
   }
   previewPoseRotation(uuid:string,rotation:number[]) {
     if(this.mode!=='pose') throw new Error('Enter Pose Preview before posing.');

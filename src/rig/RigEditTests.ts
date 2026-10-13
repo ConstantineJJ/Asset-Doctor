@@ -295,5 +295,14 @@ export async function runRigEditTests(): Promise<TestResult[]> {
     session.setBoneLength(bone(root,'Root').uuid,bone(root,'Child').uuid,3.5,'hold');root.updateMatrixWorld(true);
     close(leaf.matrixWorld.toArray(),world);close(bone(root,'Child').position.toArray(),[0,3.5,0]);
   });
+  await test('Clip rename changes only author name and roundtrips Undo Redo without changing sampler bytes', (_root,session)=>{
+    const before=session.clips.map(clip=>({name:clip.name,tracks:clip.tracks.map(t=>[bytes(t.times),bytes(t.values)])}));
+    session.renameClip(1,'  Удар / Strike  ');assert.equal(session.clips[1].name,'Удар / Strike');assert.equal(session.hasEdits,true);
+    assert.deepEqual(session.clips.map(clip=>clip.tracks.map(t=>[bytes(t.times),bytes(t.values)])),before.map(clip=>clip.tracks));
+    assert.equal(session.clips[0].name,before[0].name);session.undo();assert.equal(session.clips[1].name,before[1].name);assert.equal(session.hasEdits,false);
+    session.redo();assert.equal(session.clips[1].name,'Удар / Strike');
+    assert.throws(()=>session.renameClip(1,'   '));assert.throws(()=>session.renameClip(99,'Unknown'));
+    session.beginGesture();assert.throws(()=>session.renameClip(1,'Pending'));session.cancelGesture();
+  });
   return results;
 }

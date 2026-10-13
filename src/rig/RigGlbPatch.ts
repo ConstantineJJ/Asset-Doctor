@@ -10,6 +10,7 @@ export interface RigExportPacket {
   nodes:{index:number;rest:NodeRest;changed:boolean;tip?:number[]}[];
   skins:{index:number;inverses:number[][];changed:boolean}[];
   channels:ChannelPacket[];
+  animationNames:{index:number;name:string;changed:boolean}[];
   repairs:{node:number;mesh:number;primitive:number;operations:string[];index?:Uint32Array;attributes:Record<string,{values:Float32Array;size:number}>}[];
 }
 
@@ -131,7 +132,8 @@ export function buildRigExportPacket(session:RigEditSession,source:ArrayBuffer,h
     if(!interpolation || interpolation!==(sampler.interpolation??'LINEAR'))throw new Error('Animation interpolation cannot be preserved.');
     return {animation,channel,times:Float32Array.from(track.times),values:Float32Array.from(track.values),interpolation,size:track.getValueSize()/(isGltfCubic(track)?3:1),changed:!equal(track.times,before.times)||!equal(track.values,before.values)};
   }));
-  return {source:source.slice(0),nodes,skins,channels,repairs};
+  const animationNames=state.clips.map((clip,index)=>({index,name:clip.name,changed:clip.name!==original.clips[index].name}));
+  return {source:source.slice(0),nodes,skins,channels,animationNames,repairs};
 }
 
 const legacyKeys=['__assetDoctorSourceAudit','__assetDoctorAuthoredMaterials','__assetDoctorCompareGrounded'];
@@ -183,6 +185,7 @@ export function patchRigGlb(packet:RigExportPacket):ArrayBuffer {
     const output=append(channel.values,outputType,channel.values.length/valueComponents,old.output);
     definition.sampler=animation.samplers.length;animation.samplers.push({...structuredClone(old),input,output,interpolation:channel.interpolation});
   }
+  for(const animation of packet.animationNames)if(animation.changed)document.animations[animation.index].name=animation.name;
   for(const repair of packet.repairs) {
     const primitive=document.meshes[repair.mesh].primitives[repair.primitive];
     if(repair.index)primitive.indices=append(repair.index,'SCALAR',repair.index.length,primitive.indices);

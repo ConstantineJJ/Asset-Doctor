@@ -84,6 +84,10 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
   }
   for(const skin of packet.skins)if(skin.changed)restoreField(actual.skins[skin.index],expected.skins[skin.index],'inverseBindMatrices');
   for(const channel of packet.channels)if(channel.changed)actual.animations[channel.animation].channels[channel.channel].sampler=expected.animations[channel.animation].channels[channel.channel].sampler;
+  for(const animation of packet.animationNames)if(animation.changed) {
+    if(actual.animations[animation.index].name!==animation.name)throw new Error('Animation name differs.');
+    restoreField(actual.animations[animation.index],expected.animations[animation.index],'name');
+  }
   for(let i=0;i<(expected.animations?.length??0);i++)actual.animations[i].samplers=actual.animations[i].samplers.slice(0,expected.animations[i].samplers.length);
   for(const repair of packet.repairs) {
     const definition=actual.meshes[repair.mesh].primitives[repair.primitive],before=expected.meshes[repair.mesh].primitives[repair.primitive];
@@ -185,6 +189,7 @@ export async function verifyEditedRig(packet:RigExportPacket,output:ArrayBuffer,
     measure();
     if(expectedClips.length!==loaded.animations.length)throw new Error('Clip count differs.');
     for(let index=0;index<expectedClips.length;index++) {
+      if(expectedClips[index].name!==loaded.animations[index].name)throw new Error('Animation name differs after reimport.');
       close([expectedClips[index].duration],[loaded.animations[index].duration],'Clip duration');
       const leftMixer=new THREE.AnimationMixer(expectedRoot),rightMixer=new THREE.AnimationMixer(actualRoot);
       const leftAction=leftMixer.clipAction(expectedClips[index]),rightAction=rightMixer.clipAction(loaded.animations[index]);
