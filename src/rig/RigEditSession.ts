@@ -12,6 +12,7 @@ export interface RigSnapshot {
   skins:Map<THREE.Skeleton,number[][]>;
   clips:THREE.AnimationClip[];
   tips:Map<string,number[]>;
+  morphs:Map<string,number[]>;
 }
 
 function assertFinite(values:number[], count:number) {
@@ -45,17 +46,24 @@ export class RigEditSession {
       if(node instanceof THREE.Bone) this.bones.set(node.uuid,node);
       if(node instanceof THREE.SkinnedMesh) this.skeletons.add(node.skeleton);
     });
-    this.authored=this.capture(cloneClips(clips),new Map());
+    const tips=new Map<string,number[]>(),document=getSourceDocument(root);
+    for(const [uuid,bone] of this.bones) {
+      const index=getSourceAssociation(bone)?.nodes,tip=index===undefined?undefined:document?.nodes?.[index]?.extras?.assetDoctorRigTip;
+      if(tip?.version===1&&Array.isArray(tip.point)&&tip.point.length===3&&tip.point.every(Number.isFinite)&&Object.keys(tip).every(key=>['version','point'].includes(key)))tips.set(uuid,tip.point.slice());
+    }
+    this.authored=this.capture(cloneClips(clips),tips);
     this.baseline=this.authored;
   }
   get clips() { return this.authored.clips; }
   get hasSkeleton() { return this.skeletons.size>0; }
+  get isGestureActive() {return this.gesture!==null;}
   get canUndo() { return this.past.length>0; }
   get canRedo() { return this.future.length>0; }
   get hasEdits() { return this.signature(this.authored)!==this.signature(this.baseline); }
   getRest(uuid:string) { const rest=this.authored.nodes.get(uuid); return rest && structuredClone(rest); }
   getTerminalTip(uuid:string) { return this.authored.tips.get(uuid)?.slice(); }
   snapshot():RigSnapshot { return this.captureSnapshot(this.authored); }
+  originalSnapshot():RigSnapshot {return this.captureSnapshot(this.baseline);}
 
   private signature(snapshot:RigSnapshot) {
     let signature=this.signatures.get(snapshot);
@@ -67,10 +75,11 @@ export class RigEditSession {
   }
   private capture(clips:THREE.AnimationClip[],tips:Map<string,number[]>):RigSnapshot {
     return {nodes:new Map([...this.objects].map(([uuid,node])=>[uuid,{position:node.position.toArray(),quaternion:node.quaternion.toArray(),scale:node.scale.toArray()}])),
-      skins:new Map([...this.skeletons].map(skeleton=>[skeleton,skeleton.boneInverses.map(matrix=>matrix.toArray())])),clips,tips:new Map([...tips].map(([id,point])=>[id,point.slice()]))};
+      skins:new Map([...this.skeletons].map(skeleton=>[skeleton,skeleton.boneInverses.map(matrix=>matrix.toArray())])),clips,tips:new Map([...tips].map(([id,point])=>[id,point.slice()])),
+      morphs:new Map([...this.objects].filter(([,node])=>(node as THREE.Mesh).morphTargetInfluences).map(([uuid,node])=>[uuid,(node as THREE.Mesh).morphTargetInfluences!.slice()]))};
   }
   private captureSnapshot(state:RigSnapshot):RigSnapshot {
-    return {nodes:new Map([...state.nodes].map(([id,rest])=>[id,structuredClone(rest)])),skins:new Map([...state.skins].map(([skin,inverses])=>[skin,inverses.map(matrix=>matrix.slice())])),clips:cloneClips(state.clips),tips:new Map([...state.tips].map(([id,point])=>[id,point.slice()]))};
+    return {nodes:new Map([...state.nodes].map(([id,rest])=>[id,structuredClone(rest)])),skins:new Map([...state.skins].map(([skin,inverses])=>[skin,inverses.map(matrix=>matrix.slice())])),clips:cloneClips(state.clips),tips:new Map([...state.tips].map(([id,point])=>[id,point.slice()])),morphs:new Map([...state.morphs].map(([id,values])=>[id,values.slice()]))};
   }
   private apply(snapshot:RigSnapshot) {
     for(const [uuid,rest] of snapshot.nodes) {
@@ -78,6 +87,7 @@ export class RigEditSession {
       node.position.fromArray(rest.position); node.quaternion.fromArray(rest.quaternion); node.scale.fromArray(rest.scale); node.updateMatrix();
     }
     for(const [skeleton,inverses] of snapshot.skins) skeleton.boneInverses=inverses.map(values=>new THREE.Matrix4().fromArray(values));
+    for(const [uuid,values] of snapshot.morphs) (this.objects.get(uuid) as THREE.Mesh).morphTargetInfluences=values.slice();
     this.root.updateWorldMatrix(true,true); this.root.updateMatrixWorld(true);
     for(const skeleton of this.skeletons) skeleton.update();
   }
@@ -177,11 +187,13 @@ export class RigEditSession {
     const definition=index===undefined?undefined:source?.nodes?.[index];
     if(definition && Object.hasOwn(definition,'extras')) {
       const extras=definition.extras;
-      if(!extras || typeof extras!=='object' || Array.isArray(extras) || Object.hasOwn(extras,'assetDoctorRigTip')) throw new Error('Original extras cannot accept a terminal guide without loss.');
+      const tip=extras?.assetDoctorRigTip,known=tip?.version===1&&Array.isArray(tip.point)&&tip.point.length===3&&tip.point.every(Number.isFinite)&&Object.keys(tip).every(key=>['version','point'].includes(key));
+      if(!extras || typeof extras!=='object' || Array.isArray(extras) || (Object.hasOwn(extras,'assetDoctorRigTip')&&!known)) throw new Error('Original extras cannot accept a terminal guide without loss.');
     }
     this.transaction(()=>{this.authored={...this.authored,tips:new Map(this.authored.tips).set(uuid,point.slice())};});
   }
   setClipDuration(index:number,seconds:number) {
+    if(this.isGestureActive)throw new Error('Finish the joint drag before changing clip duration.');
     if(!this.clips[index]) throw new Error('Unknown animation clip.');
     const changed=retimeClip(this.clips[index],seconds);
     this.transaction(()=>{const clips=this.clips.slice(); clips[index]=changed; this.authored={...this.authored,clips};});
@@ -192,7 +204,7 @@ export class RigEditSession {
     if(!joint || new THREE.Quaternion().fromArray(rotation).length()<1e-8) throw new Error('Invalid preview joint rotation.');
     joint.quaternion.fromArray(rotation).normalize(); joint.updateMatrix(); this.root.updateMatrixWorld(true);
   }
-  undo() { const state=this.past.pop(); if(!state) return; this.future.push(this.authored); this.authored=state; this.restoreRest(); this.revision++; }
-  redo() { const state=this.future.pop(); if(!state) return; this.past.push(this.authored); this.authored=state; this.restoreRest(); this.revision++; }
-  reset() { if(!this.hasEdits) {this.restoreRest(); return;} this.past.push(this.authored); this.future=[]; this.authored=this.baseline; this.restoreRest(); this.revision++; }
+  undo() { if(this.isGestureActive)throw new Error('Finish the joint drag before Undo.');const state=this.past.pop(); if(!state) return; this.future.push(this.authored); this.authored=state; this.restoreRest(); this.revision++; }
+  redo() { if(this.isGestureActive)throw new Error('Finish the joint drag before Redo.');const state=this.future.pop(); if(!state) return; this.past.push(this.authored); this.authored=state; this.restoreRest(); this.revision++; }
+  reset() { if(this.isGestureActive)throw new Error('Finish the joint drag before Reset.');if(!this.hasEdits) {this.restoreRest(); return;} this.past.push(this.authored); this.future=[]; this.authored=this.baseline; this.restoreRest(); this.revision++; }
 }
