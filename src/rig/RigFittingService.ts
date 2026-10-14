@@ -3,7 +3,7 @@ import {ComputeWorkerClient} from '../workers/ComputeWorkerClient';
 import {packRoot} from '../workers/GeometryPacket';
 import {captureGeometry,geometryMatches} from '../heal/GeometrySnapshot';
 import type {RigEditSession} from './RigEditSession';
-import {fittingFrames,type FittingNode,type RigFitResult} from './RigFitting';
+import {fittingFrames,fittingShiftLimit,type FittingNode,type RigFitResult} from './RigFitting';
 
 export interface FittingReview extends RigFitResult {revision:number;stillCurrent:()=>boolean}
 export class RigFittingService {
@@ -57,12 +57,15 @@ export class RigFittingService {
   const ids=new Set<string>();
   for(const proposal of result.proposals) {
    const bone=session.root.getObjectByProperty('uuid',proposal.uuid);
-   if(!(bone instanceof THREE.Bone)||ids.has(proposal.uuid)||![proposal.current,proposal.target].every(point=>point.length===3&&point.every(Number.isFinite))||!Number.isInteger(proposal.support)||proposal.support<0||!Number.isFinite(proposal.offset)||proposal.offset<0||!Number.isFinite(proposal.length)||proposal.length<0||!['suggested','aligned','insufficient','axis-missing','outside'].includes(proposal.status))throw new Error('Fitting worker returned invalid proposals.');
+   if(!(bone instanceof THREE.Bone)||ids.has(proposal.uuid)||![proposal.current,proposal.target].every(point=>point.length===3&&point.every(Number.isFinite))||!Number.isInteger(proposal.support)||proposal.support<0||!Number.isFinite(proposal.offset)||proposal.offset<0||!Number.isFinite(proposal.length)||proposal.length<0||!['suggested','aligned','insufficient','axis-missing','outside','uncertain'].includes(proposal.status)||proposal.reason!==undefined&&!['branch','coverage','large-shift','unstable-section'].includes(proposal.reason)||proposal.status==='uncertain'&&!proposal.reason)throw new Error('Fitting worker returned invalid proposals.');
    ids.add(proposal.uuid);
    const frame=frames.get(proposal.uuid)!;if(!frame||proposal.name!==bone.name)throw new Error('Fitting worker returned a mismatched joint.');
-   const current=new THREE.Vector3().fromArray(proposal.current),target=new THREE.Vector3().fromArray(proposal.target),delta=target.clone().sub(current),tolerance=Math.max(1e-7,frame.length*1e-6,frame.current.length()*1e-9);
-   if(current.distanceTo(frame.current)>tolerance||Math.abs(proposal.length-frame.length)>tolerance||Math.abs(proposal.offset-delta.length())>tolerance||proposal.support>result.vertices)throw new Error('Fitting worker returned inconsistent reference data.');
+   const current=new THREE.Vector3().fromArray(proposal.current),target=new THREE.Vector3().fromArray(proposal.target),delta=target.clone().sub(current),tolerance=Math.max(1e-7,frame.length*1e-6),referenceTolerance=Math.max(tolerance,frame.current.length()*Number.EPSILON*32);
+   if(current.distanceTo(frame.current)>referenceTolerance||Math.abs(proposal.length-frame.length)>tolerance||Math.abs(proposal.offset-delta.length())>tolerance||proposal.support>result.vertices)throw new Error('Fitting worker returned inconsistent reference data.');
    if(proposal.status==='suggested'&&(!frame.axis||proposal.support<6||proposal.offset<=tolerance||Math.abs(delta.dot(frame.axis))>tolerance)||proposal.status!=='suggested'&&(proposal.offset>tolerance||delta.length()>tolerance))throw new Error('Fitting worker returned a non-lateral command.');
+   const authoredDelta=target.clone().sub(frame.current);
+   if(proposal.status==='suggested'&&(frame.branch||authoredDelta.length()>frame.length*(fittingShiftLimit+1e-6)||Math.abs(authoredDelta.dot(frame.axis!))>tolerance))throw new Error('Fitting worker returned an unsafe section command.');
+   if(proposal.status==='suggested'&&Math.abs(proposal.offset-authoredDelta.length())>tolerance)throw new Error('Fitting worker returned inconsistent reference data.');
   }
   let boneCount=0;session.root.traverse(node=>{if(node instanceof THREE.Bone)boneCount++;});if(ids.size!==boneCount)throw new Error('Fitting worker omitted an active joint.');
   return {...result,revision,stillCurrent};

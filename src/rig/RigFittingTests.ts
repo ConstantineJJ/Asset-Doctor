@@ -12,8 +12,9 @@ import {verifyEditedRig,rigIdentities} from './RigExportVerification';
 import {packClips,unpackClips} from '../animation/ClipPacket';
 import {rigFixture} from '../../tests/rig-fixtures';
 import {documentMatrix} from '../viewer/AssetPresentation';
+import {clipSurface,surfaceMoment} from './FittingSurface';
 
-import {fittingFixture,fittingGlb} from '../../tests/fitting-fixtures';
+import {fittingFixture,fittingGlb,unevenFittingFixture} from '../../tests/fitting-fixtures';
 const close=(a:number[],b:number[])=>{assert.equal(a.length,b.length);a.forEach((value,i)=>assert.ok(Math.abs(value-b[i])<2e-5,`${value} != ${b[i]}`));};
 function vertices(root:THREE.Group){root.updateMatrixWorld(true);const result:number[]=[];root.traverse(node=>{if(node instanceof THREE.SkinnedMesh){node.skeleton.update();for(let i=0;i<node.geometry.getAttribute('position').count;i++)result.push(...node.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(node.matrixWorld).toArray());}});return result;}
 function state(session:RigEditSession) {const snapshot=session.snapshot();return JSON.stringify({nodes:[...snapshot.nodes],joints:[...snapshot.joints.values()],skins:[...snapshot.skins.values()],clips:snapshot.clips.map(clip=>[clip.name,clip.duration,clip.tracks.map(track=>[track.name,Array.from(track.times),Array.from(track.values)])])});}
@@ -27,6 +28,71 @@ export async function runRigFittingTests() {
  });
  await test('Fitting leaves unweighted joints explicit and never guesses a global root position',()=>{
   const {root,base}=fittingFixture(),proposal=analyzeRigFitting(root).proposals.find(p=>p.uuid===base.uuid)!;assert.equal(proposal.status,'insufficient');close(proposal.current,proposal.target);
+ });
+ await test('Fitting centre is independent of dense tessellation on one side of the same closed surface',()=>{
+  const coarse=unevenFittingFixture(1),dense=unevenFittingFixture(80);
+  const a=analyzeRigFitting(coarse.root).proposals.find(p=>p.uuid===coarse.middle.uuid)!,b=analyzeRigFitting(dense.root).proposals.find(p=>p.uuid===dense.middle.uuid)!;
+  assert.equal(a.status,'suggested');assert.equal(b.status,'suggested');close(a.target,[0,1,0]);close(b.target,a.target);
+ });
+ await test('Surface fitting integrates affine skin weights and clipped sections independently of retriangulation',()=>{
+  const a={point:new THREE.Vector3(0,0,0),weight:0},b={point:new THREE.Vector3(1,0,0),weight:1},c={point:new THREE.Vector3(0,1,0),weight:0},mid={point:new THREE.Vector3(.5,.5,0),weight:.5};
+  const moment=surfaceMoment([a,b,c]);assert.ok(Math.abs(moment.mass-1/6)<1e-12);close(moment.sum.clone().divideScalar(moment.mass).toArray(),[.5,.25,0]);
+  const cut=(polygon:typeof a[])=>surfaceMoment(clipSurface(polygon,new THREE.Vector3(1,0,0),new THREE.Vector3(),.25,true));
+  const whole=cut([a,b,c]),left=cut([a,b,mid]),right=cut([a,mid,c]);assert.ok(Math.abs(whole.mass-left.mass-right.mass)<1e-12);close(whole.sum.toArray(),left.sum.add(right.sum).toArray());
+ });
+ await test('Influence threshold clips the affine weight field instead of making triangle subdivision change the centre',()=>{
+  const analyse=(segments:number)=>{const {root,mesh,middle}=unevenFittingFixture(segments,true),position=mesh.geometry.getAttribute('position'),weights=mesh.geometry.getAttribute('skinWeight');
+   for(let i=0;i<position.count;i++){const weight=.05+.15*(position.getX(i)+.5);weights.setX(i,weight);weights.setY(i,1-weight);}
+   return analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;
+  };const coarse=analyse(1),dense=analyse(80);assert.equal(coarse.status,'suggested');assert.equal(dense.status,'suggested');close(coarse.target,dense.target);
+ });
+ await test('Fitting refuses huge shifts, branching joints and one-sided surface evidence without fabricating a target',()=>{
+  for(const kind of ['large-shift','branch','coverage'] as const){
+   const {root,mesh,middle}=unevenFittingFixture();
+   if(kind==='large-shift')middle.position.set(.45,1,0);
+   if(kind==='branch')middle.add(new THREE.Bone());
+   if(kind==='coverage'){mesh.geometry.scale(1,1,0);middle.position.set(.1,1,.01);}
+   root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());
+   const proposal=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;assert.equal(proposal.status,'uncertain');assert.equal(proposal.reason,kind);close(proposal.target,proposal.current);assert.equal(proposal.offset,0);
+  }
+ });
+ await test('Tiny remote skin influences cannot pull a local fitting centre toward an unrelated surface',()=>{
+  const {root,mesh,middle}=unevenFittingFixture(),geometry=mesh.geometry,before=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;
+  const n=geometry.getAttribute('position').count;geometry.setAttribute('position',new THREE.Float32BufferAttribute([...geometry.getAttribute('position').array,20,.9,0,21,.9,0,20,1.1,1],3));
+  geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute([...geometry.getAttribute('skinIndex').array,1,0,0,0,1,0,0,0,1,0,0,0],4));geometry.setAttribute('skinWeight',new THREE.Float32BufferAttribute([...geometry.getAttribute('skinWeight').array,.01,.99,0,0,.01,.99,0,0,.01,.99,0,0],4));geometry.setIndex([...geometry.index!.array,n,n+1,n+2]);
+  const after=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;assert.equal(after.status,'suggested');close(after.target,before.target);
+ });
+ await test('Neighbouring section disagreement prevents a fitting proposal in a sharply changing surface',()=>{
+  const {root,mesh,middle}=unevenFittingFixture(),position=mesh.geometry.getAttribute('position');middle.position.set(.1,1,0);
+  for(let i=0;i<position.count;i++)position.setX(i,position.getX(i)+(position.getY(i)-1)*2);
+  root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());
+  const proposal=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;assert.equal(proposal.status,'uncertain');assert.equal(proposal.reason,'unstable-section');close(proposal.target,proposal.current);
+ });
+ await test('A surface coplanar with the joint cannot count as support on both opposing sides',()=>{
+  const {root,mesh,middle}=unevenFittingFixture();mesh.geometry.scale(1,1,0);middle.position.set(.1,1,0);root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());
+  const proposal=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;assert.equal(proposal.status,'uncertain');assert.equal(proposal.reason,'coverage');close(proposal.target,proposal.current);
+ });
+ await test('Non-bone coordinate helpers do not hide the first branching bone descendants',()=>{
+  const {root,middle}=unevenFittingFixture(),helper=new THREE.Group(),tip=middle.children[0];helper.add(tip,new THREE.Bone());middle.add(helper);
+  const proposal=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;assert.equal(proposal.reason,'branch');assert.equal(proposal.status,'uncertain');close(proposal.target,proposal.current);
+ });
+ await test('Moving the document far from the origin cannot loosen the worker displacement limit',async()=>{
+  const {root}=unevenFittingFixture();root.position.x=1e9;const session=new RigEditSession(root,[]);session.enterEdit();const before=state(session);
+  const service=new RigFittingService({dispose(){},async request<T>(payload:unknown){const {root:packet}=payload as {root:ReturnType<typeof packRoot>},result=analyzeRigFitting(unpackRoot(structuredClone(packet))),proposal=result.proposals.find(p=>p.name==='Middle')!;proposal.target=[proposal.current[0]+1.2,proposal.current[1],proposal.current[2]];proposal.offset=new THREE.Vector3().fromArray(proposal.target).distanceTo(new THREE.Vector3().fromArray(proposal.current));proposal.status='suggested';proposal.support=6;delete proposal.reason;return result as T;}});
+  await assert.rejects(service.analyze(session),/unsafe/);assert.equal(state(session),before);assert.equal(session.revision,0);
+ });
+ await test('The displacement budget is measured from captured rest rather than a worker-supplied shifted reference',async()=>{
+  const {root}=unevenFittingFixture();root.position.x=1e13;const session=new RigEditSession(root,[]);session.enterEdit();const before=state(session);
+  const service=new RigFittingService({dispose(){},async request<T>(payload:unknown){const {root:packet}=payload as {root:ReturnType<typeof packRoot>},result=analyzeRigFitting(unpackRoot(structuredClone(packet))),proposal=result.proposals.find(p=>p.name==='Middle')!;proposal.current[0]+=.0625;proposal.target=[proposal.current[0]+.34,proposal.current[1],proposal.current[2]];proposal.offset=new THREE.Vector3().fromArray(proposal.target).distanceTo(new THREE.Vector3().fromArray(proposal.current));proposal.status='suggested';proposal.support=6;delete proposal.reason;return result as T;}});
+  await assert.rejects(service.analyze(session),/unsafe/);assert.equal(state(session),before);assert.equal(session.revision,0);
+ });
+ await test('The command boundary independently refuses oversized and branching-joint proposals from a worker',async()=>{
+  for(const branch of [false,true]) {
+   const {root,middle}=unevenFittingFixture();if(branch)middle.add(new THREE.Bone());const session=new RigEditSession(root,[]);session.enterEdit();const before=state(session);
+   const service=new RigFittingService({dispose(){},async request<T>(payload:unknown){const {root:packet}=payload as {root:ReturnType<typeof packRoot>},result=analyzeRigFitting(unpackRoot(structuredClone(packet))),proposal=result.proposals.find(p=>p.name==='Middle')!;
+    const direction=branch?new THREE.Vector3(1,0,0).cross(new THREE.Vector3().fromArray(proposal.current)).normalize().multiplyScalar(.1):new THREE.Vector3(1,0,0);proposal.target=new THREE.Vector3().fromArray(proposal.current).add(direction).toArray();proposal.offset=direction.length();proposal.status='suggested';proposal.support=6;delete proposal.reason;return result as T;
+   }});await assert.rejects(service.analyze(session),/unsafe/);assert.equal(state(session),before);assert.equal(session.revision,0);
+  }
  });
  await test('Fitting ignores unreferenced influence vertices instead of biasing the local centre',()=>{
   const {root,mesh,middle}=fittingFixture(),geometry=mesh.geometry;

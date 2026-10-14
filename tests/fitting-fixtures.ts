@@ -20,6 +20,18 @@ export function fittingFixture() {
   const session=new RigEditSession(root,clips);session.enterEdit();return {root,session,mesh,middle,other,base};
 }
 
+/** Same square tube surface with variable tessellation on only its right face. */
+export function unevenFittingFixture(rightSegments=1,allSides=false) {
+ const fixture=fittingFixture(),positions:number[]=[],joints:number[]=[],weights:number[]=[],indices:number[]=[];
+ const corners=[[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]];
+ for(let side=0;side<4;side++) {
+  const a=corners[side],b=corners[(side+1)%4],segments=allSides||side===1?rightSegments:1,base=positions.length/3;
+  for(const y of [.8,1,1.2])for(let step=0;step<=segments;step++){const t=step/segments;positions.push(a[0]+(b[0]-a[0])*t,y,a[1]+(b[1]-a[1])*t);joints.push(1,0,0,0);weights.push(1,0,0,0);}
+  for(let row=0;row<2;row++)for(let step=0;step<segments;step++){const i=base+row*(segments+1)+step;indices.push(i,i+1,i+segments+1,i+1,i+segments+2,i+segments+1);}
+ }
+ const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(joints,4));geometry.setAttribute('skinWeight',new THREE.Float32BufferAttribute(weights,4));geometry.setIndex(indices);fixture.mesh.geometry=geometry;return fixture;
+}
+
 
 /** Serialize an actual asymmetric skinned model; the app imports a real GLB. */
 export async function fittingGlb(nonuniform=false) {
@@ -32,7 +44,12 @@ export async function fittingGlb(nonuniform=false) {
  if(!previous)Reflect.set(globalThis,'FileReader',Reader);
  try{
   const {root,session,mesh}=fittingFixture();root.name='FitModel';root.userData={author:'Fitting fixture',keep:{value:1}};
-  if(nonuniform){root.scale.set(1.5,.75,2);root.rotation.y=.2;root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());mesh.bind(mesh.skeleton,mesh.matrixWorld.clone());}
+  if(nonuniform){
+   // Keep the intended fitting displacement within the conservative document-space
+   // budget even when X/Z stretch while bone length along Y shrinks.
+   for(const name of ['Middle','Other']){const bone=root.getObjectByName(name)!;bone.position.x=name==='Middle'?.12:2.08;bone.position.z=name==='Middle'?.06:.04;const track=session.clips[0].tracks.find(track=>track.name===name+'.position')!;for(let i=0;i<track.values.length;i+=3){track.values[i]=bone.position.x;track.values[i+2]=bone.position.z;}}
+   root.scale.set(1.5,.75,2);root.rotation.y=.2;root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());mesh.bind(mesh.skeleton,mesh.matrixWorld.clone());
+  }
   return await new GLTFExporter().parseAsync(root,{binary:true,animations:session.clips}) as ArrayBuffer;
  }
  finally{if(!previous)Reflect.deleteProperty(globalThis,'FileReader');}
