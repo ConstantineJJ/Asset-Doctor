@@ -371,7 +371,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const repairQueue = buildRepairQueueCandidates(healthIssues);
 
   return (
-    <aside className="w-96 bg-[#16181d] border-l border-[#262932] flex flex-col h-full shrink-0 select-none text-xs text-gray-200">
+    <aside data-testid="inspector" className={`${activeTab==='skeleton'?'w-[clamp(24rem,24vw,34rem)]':'w-96'} bg-[#16181d] border-l border-[#262932] flex flex-col h-full shrink-0 select-none text-xs text-gray-200`}>
       {/* Inspector Tabs */}
       <div className="h-10 px-2 border-b border-[#262932] grid grid-cols-5 gap-1 items-center bg-[#1a1c22]">
         <button
@@ -1219,40 +1219,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
                 Rigging Summary
               </h4>
-              <span className="text-[9px] font-mono text-gray-500">SAFE PREVIEW TOOLS</span>
+              <span className="text-[9px] font-mono text-gray-500"></span>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <div>
-                <span className="text-gray-400 block text-[10px]">Skeletons:</span>
-                <span className="font-mono font-bold text-gray-100">{summary.skeletonCount}</span>
-              </div>
-              <div>
-                <span className="text-gray-400 block text-[10px]">Bones:</span>
-                <span className="font-mono font-bold text-gray-100">{summary.boneCount}</span>
-              </div>
-              <div>
-                <span className="text-gray-400 block text-[10px]">Skinned Meshes:</span>
-                <span className="font-mono text-gray-300">{summary.skinnedMeshCount}</span>
-              </div>
-              <div>
-                <span className="text-gray-400 block text-[10px]">Animation Clips:</span>
-                <span className="font-mono text-gray-300">{summary.clipCount}</span>
-              </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+              {[[language==='ru'?'Скелетов':'Skeletons',summary.skeletonCount],[language==='ru'?'Костей':'Bones',summary.boneCount],[language==='ru'?'Skinned-мешей':'Skinned Meshes',summary.skinnedMeshCount],[language==='ru'?'Анимаций':'Animation Clips',summary.clipCount]].map(([name,count])=><div key={name} className="flex justify-between gap-2"><span className="text-gray-400">{name}:</span><span className="font-mono font-bold">{count}</span></div>)}
             </div>
 
             <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-[#2b2f38]">
-              <button
-                onClick={() => onSetSkeletonVisible(!skeletonVisible)}
-                aria-pressed={skeletonVisible}
-                className={`px-2 py-1 rounded border text-[10px] cursor-pointer ${
-                  skeletonVisible
-                    ? 'border-cyan-700 bg-cyan-950/30 text-cyan-300'
-                    : 'border-[#343944] bg-[#202329] text-gray-300'
-                }`}
-              >
-                <Zap className="w-3 h-3 inline mr-1" />
-                Skeleton X-Ray {skeletonVisible ? 'ON' : 'OFF'}
-              </button>
               <button
                 onClick={onResetPreviewPose}
                 className="px-2 py-1 rounded border border-[#343944] bg-[#202329] text-gray-300 hover:text-white cursor-pointer text-[10px]"

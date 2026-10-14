@@ -125,7 +125,7 @@ test('Clip rename is undoable and survives verified GLB download and actual reim
   await expect(name).toHaveValue(renamed);
   await page.getByRole('button', { name: 'Verify Edited GLB', exact: true }).click();
   await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED', { timeout: 30000 });
-  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Save Edited GLB', exact: true }).click()]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Save Changes', exact: true }).click()]);
   const stream = await download.createReadStream(); expect(stream).toBeTruthy();
   const chunks: Buffer[] = []; for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
   const output = Buffer.concat(chunks);
@@ -329,9 +329,9 @@ test('Ctrl+Z does not undo the hidden Doctor asset while Compare is open',async(
   await page.keyboard.press('Control+z');await expect.poll(async()=>(await rigViewerState(page)).bones.find(bone=>bone.uuid===root.uuid)!.position).toEqual(root.position);
 });
 
-test('Version 2.0.4 is visible and model rotation controls occupy the top of the viewport above playback', async ({ page }) => {
+test('Version 2.0.5 is visible and model rotation controls occupy the top of the viewport above playback', async ({ page }) => {
   await openRig(page);
-  await expect(page.getByText(/\b2\.0\.4\b/).first()).toBeVisible();
+  await expect(page.getByText(/\b2\.0\.5\b/).first()).toBeVisible();
   const rotation = page.getByTestId('model-rotation-controls'); await expect(rotation).toBeVisible();
   const controls = (await rotation.boundingBox())!, viewport = (await page.locator('canvas:visible').first().boundingBox())!;
   const play = (await page.getByTitle('Play', { exact: true }).boundingBox())!;

@@ -22,7 +22,7 @@ async function clickJoint(page:Page,name:string,right=false) {
 }
 async function exportAndReopen(page:Page) {
   await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED',{timeout:30000});
-  const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Edited GLB',exact:true}).click()]);
+  const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Changes',exact:true}).click()]);
   const chunks:Buffer[]=[];for await(const chunk of (await download.createReadStream())!)chunks.push(Buffer.from(chunk));const output=Buffer.concat(chunks);
   await test.info().attach('joint-edited.glb',{body:output,contentType:'model/gltf-binary'});
   await page.locator('header input[type=file]').setInputFiles({name:'joint-reimport.glb',mimeType:'model/gltf-binary',buffer:output});

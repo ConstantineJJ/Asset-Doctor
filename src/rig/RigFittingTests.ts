@@ -13,6 +13,7 @@ import {packClips,unpackClips} from '../animation/ClipPacket';
 import {rigFixture} from '../../tests/rig-fixtures';
 import {documentMatrix} from '../viewer/AssetPresentation';
 import {clipSurface,surfaceMoment} from './FittingSurface';
+import {FittingSurfaceFrame} from './FittingSurfaceFrame';
 
 import {fittingFixture,fittingGlb,unevenFittingFixture} from '../../tests/fitting-fixtures';
 const close=(a:number[],b:number[])=>{assert.equal(a.length,b.length);a.forEach((value,i)=>assert.ok(Math.abs(value-b[i])<2e-5,`${value} != ${b[i]}`));};
@@ -21,6 +22,41 @@ function state(session:RigEditSession) {const snapshot=session.snapshot();return
 export async function runRigFittingTests() {
  const results:{name:string;passed:boolean;actual?:unknown;expected?:unknown}[]=[];
  const test=async(name:string,run:()=>void|Promise<void>)=>{try{await run();results.push({name,passed:true});}catch(error){results.push({name,passed:false,actual:String(error),expected:'Fitting proposal and authored-data contract holds'});}};
+ await test('Surface direction moments match analytic affine-weight integrals and retriangulation',()=>{
+  const a={point:new THREE.Vector3(0,0,0),weight:0},b={point:new THREE.Vector3(1,0,0),weight:1},c={point:new THREE.Vector3(0,1,0),weight:0},mid={point:new THREE.Vector3(.5,.5,0),weight:.5};
+  const whole=new FittingSurfaceFrame(new THREE.Vector3()),split=new FittingSurfaceFrame(new THREE.Vector3());whole.add([a,b,c]);split.add([a,b,mid]);split.add([a,mid,c]);
+  assert.ok(Math.abs(whole.mass-1/6)<1e-12);close(whole.second.map(v=>v/whole.mass),[.3,.1,0,.1,.1,0,0,0,0]);close(split.second,whole.second);
+  close(whole.axis(new THREE.Vector3(0,0,1))!.toArray(),[0,0,1]);
+ });
+ await test('A slanted surface does not propose the same joint again after fitting with held neighbours',()=>{
+  const {root,mesh,middle}=unevenFittingFixture(12,true);middle.position.set(.05,1.03,.01);
+  const attribute=mesh.geometry.getAttribute('position');for(let i=0;i<attribute.count;i++)attribute.setX(i,attribute.getX(i)+(attribute.getY(i)-1)*.2);
+  root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());
+  const session=new RigEditSession(root,[]);session.enterEdit();const first=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;
+  assert.equal(first.status,'suggested');session.applyFittingPositions([{uuid:first.uuid,position:first.target}]);
+  close(new THREE.Vector3().setFromMatrixPosition(documentMatrix(middle)).toArray(),first.target);
+  const second=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;assert.equal(second.status,'aligned');
+ });
+ await test('Partial fitting holds a neighbouring joint and explicitly refuses its newly ambiguous direction',()=>{
+  const {root,mesh,middle,other}=fittingFixture();middle.clear();other.clear();middle.position.set(.1,1,0);middle.add(other);other.position.set(.445,1,0);mesh.skeleton=new THREE.Skeleton(mesh.skeleton.bones.slice(0,3));
+  const position=mesh.geometry.getAttribute('position');for(let i=36;i<72;i++){position.setX(i,position.getX(i)-2+.445);position.setY(i,position.getY(i)+1);}
+  root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());const session=new RigEditSession(root,[]);session.enterEdit();
+  const before=analyzeRigFitting(root),parent=before.proposals.find(p=>p.uuid===middle.uuid)!,child=before.proposals.find(p=>p.uuid===other.uuid)!;assert.equal(parent.status,'suggested');assert.equal(child.status,'suggested');
+  const held=new THREE.Vector3().setFromMatrixPosition(documentMatrix(other)).toArray();session.applyFittingPositions([{uuid:parent.uuid,position:parent.target}]);close(new THREE.Vector3().setFromMatrixPosition(documentMatrix(other)).toArray(),held);
+  const after=analyzeRigFitting(root).proposals.find(p=>p.uuid===other.uuid)!;assert.equal(after.status,'uncertain');assert.equal(after.reason,'surface-axis');close(after.current,held);close(after.target,held);
+ });
+ await test('Surface fitting rejects a worker command along the bone even below the total displacement cap',async()=>{
+  const {session}=unevenFittingFixture();const before=state(session);
+  const service=new RigFittingService({dispose(){},async request<T>(payload:unknown){const {root:packet}=payload as {root:ReturnType<typeof packRoot>},result=analyzeRigFitting(unpackRoot(structuredClone(packet))),p=result.proposals.find(p=>p.name==='Middle')!;p.target=[p.current[0],p.current[1]+.1,p.current[2]];p.offset=.1;return result as T;}});
+  await assert.rejects(service.analyze(session),/non-lateral|unsafe/);assert.equal(state(session),before);
+ });
+ await test('An isotropic influence surface cannot supply a stable fitting direction',()=>{
+  const {root,mesh,middle}=unevenFittingFixture();mesh.geometry=new THREE.SphereGeometry(.5,24,16);const count=mesh.geometry.getAttribute('position').count;
+  const joints=new Uint16Array(count*4),weights=new Float32Array(count*4);for(let i=0;i<count;i++){joints[i*4]=1;weights[i*4]=1;}mesh.geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(joints,4));mesh.geometry.setAttribute('skinWeight',new THREE.Float32BufferAttribute(weights,4));mesh.geometry.translate(0,1,0);
+  // X and Z have identical moments; point the authored chain into that degenerate eigenspace.
+  middle.children[0].position.set(1,0,0);root.updateMatrixWorld(true);mesh.skeleton.boneInverses=mesh.skeleton.bones.map(bone=>bone.matrixWorld.clone().invert());
+  const proposal=analyzeRigFitting(root).proposals.find(p=>p.uuid===middle.uuid)!;assert.equal(proposal.status,'uncertain');assert.equal(proposal.reason,'surface-axis');close(proposal.target,proposal.current);
+ });
  await test('Fitting finds separate local section centres without changing authored rig or weights',()=>{
   const {root,session,mesh,middle,other}=fittingFixture(),before=state(session),bytes=Array.from(mesh.geometry.getAttribute('position').array);
   const result=analyzeRigFitting(root);for(const [bone,target]of [[middle,[0,1,0]],[other,[2,1,0]]] as const){const proposal=result.proposals.find(p=>p.uuid===bone.uuid)!;assert.equal(proposal.status,'suggested');close(proposal.target,[...target]);assert.ok(proposal.support>=6);}
@@ -203,6 +239,10 @@ export async function runRigFittingTests() {
    session.applyFittingPositions(proposal.map(p=>({uuid:p.uuid,position:p.target})));close(vertices(loaded.root),before);
    const packet=buildRigExportPacket(session,source),output=patchRigGlb(packet),expected=unpackRoot(structuredClone(packRoot(loaded.root)));
    const result=await verifyEditedRig(packet,output,expected,unpackClips(packClips(session.clips)),rigIdentities(loaded.root));assert.equal(result.status,'VERIFIED',result.reasons.join('; '));assert.equal(result.sourcePreserved,true);assert.equal(result.clipCount,loaded.animations.length);
+   const fitted=analyzeRigFitting(loaded.root);assert.equal(fitted.proposals.filter(p=>p.status==='suggested').length,0);for(const p of proposal)assert.equal(fitted.proposals.find(q=>q.name===p.name)!.status,'aligned');
+   const reopened=await loader.loadFromArrayBuffer(output,'fit-reopened.glb');
+   const fresh=analyzeRigFitting(reopened.root);assert.equal(fresh.proposals.filter(p=>p.status==='suggested').length,0);for(const p of proposal)assert.equal(fresh.proposals.find(q=>q.name===p.name)!.status,'aligned');
+   for(const p of proposal){const bone=reopened.root.getObjectByName(p.name)!;close(new THREE.Vector3().setFromMatrixPosition(documentMatrix(bone)).toArray(),p.target);}
   } finally{loader.dispose();}
  });
  await test('Fitting batch retains morphs, STEP and shared CUBICSPLINE samples under nonuniform authored ancestors',async()=>{

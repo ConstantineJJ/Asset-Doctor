@@ -118,6 +118,7 @@ export function App() {
   const [fittingSelection,setFittingSelection]=useState<Set<string>>(new Set());
   const [fittingBusy,setFittingBusy]=useState(false),fittingBusyRef=useRef(false),fittingRequestRef=useRef(0);
   const [fittingError,setFittingError]=useState<string|null>(null);
+  const [appliedFit,setAppliedFit]=useState<{rootUuid:string;revision:number;count:number}|null>(null);
   const discardFitting=useCallback(()=>{
     fittingRequestRef.current++;rigFittingServiceRef.current?.cancel();fittingBusyRef.current=false;setFittingBusy(false);
     fittingReviewRef.current=null;setFittingReview(null);setFittingSelection(new Set());setFittingError(null);sceneManagerRef.current?.setRigFittingPreview([]);
@@ -1469,7 +1470,9 @@ export function App() {
     if(!review||!review.stillCurrent()){discardFitting();setFittingError(language==='ru'?'Предложения устарели. Выполните анализ снова.':'Proposals are stale. Analyze again.');return;}
     const positions=review.proposals.filter(proposal=>proposal.status==='suggested'&&fittingSelection.has(proposal.uuid)).map(proposal=>({uuid:proposal.uuid,position:proposal.target}));
     if(!positions.length)return;
+    const session=rigSessionRef.current!,revision=session.revision;
     handleRigAction(session=>session.applyFittingPositions(positions));
+    if(session.revision>revision)setAppliedFit({rootUuid:session.root.uuid,revision:session.revision,count:positions.length});
   };
   const handleRigMode=(mode:RigMode)=>{
     if(fittingBusyRef.current)return;
@@ -1635,7 +1638,7 @@ export function App() {
         {/* Right: Technical Inspector & Diagnostic Panel */}
         <InspectorPanel
           animationClips={animationClips} activeClipIndex={activeClipIndex} onSelectClip={handleSelectClip} animationBusy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} clipSourceKey={rigSessionRef.current?.root.uuid??fileName}
-          rigEditor={<>{rigSessionRef.current?.hasSkeleton&&<RigFittingPanel review={fittingReview} selected={fittingSelection} activeUuid={selectedUuid} busy={fittingBusy} blocked={!rigEditorProps.enabled||healBusy||exportBusy||rigDragging||Boolean(pendingRigRemoval)||repairQueueState.status==='running'} edit={rigSessionRef.current?.mode==='edit'} error={fittingError} onAnalyze={()=>void handleAnalyzeFitting()} onCancel={discardFitting} onApply={handleApplyFitting} onPick={uuid=>sceneManagerRef.current?.selectObject(uuid)} onToggle={(uuid,checked)=>setFittingSelection(previous=>{const next=new Set(previous);if(checked)next.add(uuid);else next.delete(uuid);return next;})}/>}<RigEditorPanel {...rigEditorProps} /></>}
+          rigEditor={<>{rigSessionRef.current?.hasSkeleton&&<RigFittingPanel appliedCount={appliedFit?.rootUuid===rigSessionRef.current?.root.uuid&&appliedFit.revision===rigSessionRef.current?.revision?appliedFit.count:undefined} onSelectAll={selected=>setFittingSelection(new Set(selected?fittingReview?.proposals.filter(p=>p.status==='suggested').map(p=>p.uuid):[]))} review={fittingReview} selected={fittingSelection} activeUuid={selectedUuid} busy={fittingBusy} blocked={!rigEditorProps.enabled||healBusy||exportBusy||rigDragging||Boolean(pendingRigRemoval)||repairQueueState.status==='running'} edit={rigSessionRef.current?.mode==='edit'} error={fittingError} onAnalyze={()=>void handleAnalyzeFitting()} onCancel={discardFitting} onApply={handleApplyFitting} onPick={uuid=>sceneManagerRef.current?.selectObject(uuid)} onToggle={(uuid,checked)=>setFittingSelection(previous=>{const next=new Set(previous);if(checked)next.add(uuid);else next.delete(uuid);return next;})}/>}<RigEditorPanel {...rigEditorProps} /></>}
           summary={summary}
           healthIssues={healthIssues}
           progressiveState={progressiveState}

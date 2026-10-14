@@ -69,3 +69,5 @@ canvas {
 .asset-doctor-ui :is(input,select,textarea):disabled { color: #adb8c4; cursor: not-allowed; }
 
 .asset-doctor-ui :is(.text-amber-300,.text-amber-200) { color: #ffb7c1; }
+
+.asset-doctor-ui button[data-tone="save"] { --control-bg: #c5162f; --control-border: #ff7184; --control-text: #ffffff; --control-hover: #e5233f; }

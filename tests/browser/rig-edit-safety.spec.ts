@@ -39,5 +39,5 @@ test('Rig export blocks gizmo interaction and replacement cannot publish an old 
  await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();await expect.poll(()=>page.evaluate(()=>(window as any).__rigMessageHeld)).toBe(true);expect((await rigViewerState(page)).gizmoEnabled).toBe(false);
  await page.locator('header input[type=file]').setInputFiles({name:'new-rig.glb',mimeType:'model/gltf-binary',buffer:Buffer.from(rigFixture().buffer)});await page.getByRole('button',{name:'Discard and open',exact:true}).click();await expect(page.getByText('new-rig.glb',{exact:true})).toBeVisible();
  await expect.poll(()=>page.evaluate(()=>(window as any).__rigMessageReleased)).toBe(true);
- await expect(page.getByRole('button',{name:'Save Edited GLB',exact:true})).toHaveCount(0);expect((await rigViewerState(page)).durations).toEqual([4,4,4,4]);expect(errors).toEqual([]);
+ await expect(page.getByRole('button',{name:'Save Changes',exact:true})).toBeDisabled();await expect(page.getByTestId('rig-export-status').filter({hasText:'VERIFIED'})).toHaveCount(0);expect((await rigViewerState(page)).durations).toEqual([4,4,4,4]);expect(errors).toEqual([]);
 });

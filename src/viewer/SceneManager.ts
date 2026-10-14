@@ -1710,8 +1710,8 @@ export class SceneManager {
     const group=new THREE.Group();group.name='__ascope_internal_rig_fitting';
     const points=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(proposals.flatMap(proposal=>proposal.target),3));
     const lines=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(proposals.flatMap(proposal=>[...proposal.current,...proposal.target]),3));
-    const markers=new THREE.Points(points,new THREE.PointsMaterial({color:0x8dcfff,size:12,sizeAttenuation:false,depthTest:false,depthWrite:false}));
-    const links=new THREE.LineSegments(lines,new THREE.LineBasicMaterial({color:0x8dcfff,depthTest:false,depthWrite:false,transparent:true,opacity:.7}));
+    const markers=new THREE.Points(points,new THREE.PointsMaterial({color:0xbaff00,size:16,sizeAttenuation:false,depthTest:false,depthWrite:false}));
+    const links=new THREE.LineSegments(lines,new THREE.LineBasicMaterial({color:0xbaff00,depthTest:false,depthWrite:false,transparent:true,opacity:.7}));
     for(const object of [markers,links]){object.frustumCulled=false;object.renderOrder=1001;group.add(object);}
     this.presentationWrapper.add(group);this.fittingPreview=group;
   }

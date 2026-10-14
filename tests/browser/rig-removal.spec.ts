@@ -169,7 +169,7 @@ test('An actual invalid live skin stream cannot publish VERIFIED export or Save 
   await changeDuringPreview(page, 'invalid-weight'); const invalid = await removalState(page);
   await page.getByRole('button', { name: 'Verify Edited GLB', exact: true }).click();
   await expect(page.getByTestId('rig-toolbar').getByRole('alert')).toContainText(/finite|weight|deformation|sample|verif|invalid/i, { timeout: 30000 });
-  await expect(page.getByRole('button', { name: 'Save Edited GLB', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save Changes', exact: true })).toBeDisabled();
   await expect(page.getByTestId('rig-export-status').filter({ hasText: 'VERIFIED' })).toHaveCount(0);
   const after = await removalState(page); expect(authored(after)).toEqual(authored(invalid)); expect(after.revision).toBe(invalid.revision);
 });
@@ -207,7 +207,7 @@ test('Textured Khronos Fox Tail branch removal preserves embedded image hashes, 
   await page.getByTestId('rig-editor').getByRole('button', { name: 'Undo', exact: true }).click(); expect(authored(await removalState(page))).toEqual(authored(before));
   await page.getByTestId('rig-editor').getByRole('button', { name: 'Redo', exact: true }).click(); expect(authored(await removalState(page))).toEqual(authored(after));
   await page.getByRole('button', { name: 'Verify Edited GLB', exact: true }).click(); await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED', { timeout: 45000 });
-  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Save Edited GLB', exact: true }).click()]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Save Changes', exact: true }).click()]);
   const chunks: Buffer[] = []; for await (const chunk of (await download.createReadStream())!) chunks.push(Buffer.from(chunk)); const output = Buffer.concat(chunks), exported = documentOf(output);
   expect(exported.materials).toEqual(originalDocument.materials); expect(exported.textures).toEqual(originalDocument.textures); expect(exported.images.length).toBe(originalDocument.images.length); expect(imageHashes(output)).toEqual(sourceHashes);
   expect(exported.animations.map((clip: any) => clip.name)).toEqual(before.clips.map(clip => clip.name));

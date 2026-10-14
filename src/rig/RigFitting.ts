@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import {documentMatrix} from '../viewer/AssetPresentation';
+import {FittingSurfaceFrame,surfaceAxisAngle} from './FittingSurfaceFrame';
 import {clipSurface,clipInfluence,surfaceMoment,type WeightedPoint} from './FittingSurface';
 export type FitStatus='suggested'|'aligned'|'insufficient'|'axis-missing'|'outside'|'uncertain';
-export type FitReason='branch'|'coverage'|'large-shift'|'unstable-section';
+export type FitReason='branch'|'coverage'|'large-shift'|'unstable-section'|'surface-axis';
 export interface FitProposal {uuid:string;name:string;current:number[];target:number[];support:number;offset:number;length:number;status:FitStatus;reason?:FitReason}
 export interface RigFitResult {proposals:FitProposal[];vertices:number}
 export interface FittingNode {uuid:string;parent:string|null;bone:boolean;position:number[]}
@@ -25,7 +26,7 @@ export function analyzeRigFitting(root:THREE.Group):RigFitResult {
  root.traverse(node=>{nodes.push({uuid:node.uuid,parent:node.parent?.uuid??null,bone:node instanceof THREE.Bone,position:new THREE.Vector3().setFromMatrixPosition(documentMatrix(node)).toArray()});if(node instanceof THREE.SkinnedMesh)meshes.push(node);});
  const frames=fittingFrames(nodes),stats=new Map([...frames].map(([uuid,frame])=>{
   const u=frame.axis?new THREE.Vector3(Math.abs(frame.axis.x)<.8?1:0,0,Math.abs(frame.axis.x)<.8?0:1).cross(frame.axis).normalize():new THREE.Vector3(),v=frame.axis?frame.axis.clone().cross(u):new THREE.Vector3();
-  const record={...frame,u,v,total:0,nearest:Infinity,support:new Set<number>(),sections:[0,1,2].map(()=>({mass:0,sum:new THREE.Vector3()})),sides:[0,0,0,0]};return [uuid,record] as const;
+  const record={...frame,u,v,surface:new FittingSurfaceFrame(frame.current),spanMin:Infinity,spanMax:-Infinity,total:0,nearest:Infinity,support:new Set<number>(),sections:[0,1,2].map(()=>({mass:0,sum:new THREE.Vector3()})),sides:[0,0,0,0]};return [uuid,record] as const;
  }));
  const bounds=new THREE.Box3(),delta=new THREE.Vector3();let vertices=0,base=0;
  const entries=meshes.map(mesh=>{
@@ -46,8 +47,14 @@ export function analyzeRigFitting(root:THREE.Group):RigFitResult {
   }
   const entry={mesh,joints,weights,rest,triangleCount,base};base+=positions.count;return entry;
  });
- // Two streaming triangle passes: nearest surface interval, then clipped moments.
- for(const second of [false,true])for(const entry of entries)for(let t=0;t<entry.triangleCount;t+=3) {
+ // Geometry fixes the section direction and width across Apply and GLB roundtrips.
+ for(const pass of [0,1,2]) {
+  if(pass===1)for(const [uuid,item]of stats){
+   if(!item.axis||item.branch)continue;
+   item.axis=item.surface.axis(frames.get(uuid)!.axis!);
+   if(item.axis){item.u.set(Math.abs(item.axis.x)<.8?1:0,0,Math.abs(item.axis.x)<.8?0:1).cross(item.axis).normalize();item.v.copy(item.axis).cross(item.u);}
+  }
+  for(const entry of entries)for(let t=0;t<entry.triangleCount;t+=3) {
   const indices=[0,1,2].map(slot=>entry.mesh.geometry.index?.getX(t+slot)??t+slot),points=indices.map(index=>new THREE.Vector3().fromArray(entry.rest,index*3));
   if(points[1].clone().sub(points[0]).cross(points[2].clone().sub(points[0])).lengthSq()<1e-30)continue;
   const influences=new Map<string,number[]>();
@@ -56,12 +63,13 @@ export function analyzeRigFitting(root:THREE.Group):RigFitResult {
    const item=stats.get(uuid)!;if(!item.axis||item.branch||Math.max(...weights)<.1)continue;
    const original:WeightedPoint[]=points.map((point,i)=>({point,weight:weights[i]})),polygon=Math.min(...weights)<.1?clipInfluence(original,.1):original;
    if(polygon.length<3||surfaceMoment(polygon).mass<=0)continue;
+   if(pass===0){item.surface.add(polygon);continue;}
    const axial=polygon.map(vertex=>delta.copy(vertex.point).sub(item.current).dot(item.axis!)),min=Math.min(...axial),max=Math.max(...axial);
-   if(!second){item.nearest=Math.min(item.nearest,min<=0&&max>=0?0:Math.min(Math.abs(min),Math.abs(max)));continue;}
+   if(pass===1){item.spanMin=Math.min(item.spanMin,min);item.spanMax=Math.max(item.spanMax,max);item.nearest=Math.min(item.nearest,min<=0&&max>=0?0:Math.min(Math.abs(min),Math.abs(max)));continue;}
    if(item.nearest>item.length*.5)continue;
-   const band=Math.max(item.length*.2,item.nearest+item.length*.08);
+   const span=item.spanMax-item.spanMin,band=Math.max(span*.2,item.nearest+span*.08);
    for(let section=0;section<3;section++) {
-    const centre=(section-1)*item.length*.15;
+    const centre=(section-1)*span*.15;
     if(max<centre-band||min>centre+band)continue;
     const clipped=clipSurface(clipSurface(polygon,item.axis,item.current,centre-band,true),item.axis,item.current,centre+band,false),moment=surfaceMoment(clipped);
     if(moment.mass<=0)continue;item.sections[section].mass+=moment.mass;item.sections[section].sum.add(moment.sum);
@@ -69,21 +77,24 @@ export function analyzeRigFitting(root:THREE.Group):RigFitResult {
    }
   }
  }
+ }
  const diagonal=bounds.isEmpty()?0:bounds.getSize(new THREE.Vector3()).length();
  const proposals=[...stats].map(([uuid,item])=>{
   let status:FitStatus='insufficient',reason:FitReason|undefined,target=item.current.clone();const central=item.sections[1];
   if(item.total<6)status='insufficient';
   else if(item.branch){status='uncertain';reason='branch';}
-  else if(!item.axis)status='axis-missing';
+  else if(!item.axis){status='uncertain';reason='surface-axis';}
   else if(item.nearest>item.length*.5&&Number.isFinite(item.nearest))status='outside';
   else if(item.support.size>=6&&central.mass>0) {
    delta.copy(central.sum).divideScalar(central.mass).sub(item.current);delta.addScaledVector(item.axis,-delta.dot(item.axis));
    const candidate=item.current.clone().add(delta);
-   const stable=item.sections.every(section=>{if(section.mass<=0)return false;const centre=section.sum.clone().divideScalar(section.mass).sub(item.current);centre.addScaledVector(item.axis!,-centre.dot(item.axis!));return centre.distanceTo(delta)<=item.length*.1;});
-   if(delta.length()>item.length*fittingShiftLimit){status='uncertain';reason='large-shift';}
+   const stable=item.sections.every(section=>{if(section.mass<=0)return false;const centre=section.sum.clone().divideScalar(section.mass).sub(item.current);centre.addScaledVector(item.axis!,-centre.dot(item.axis!));return centre.distanceTo(delta)<=Math.min(item.length,item.spanMax-item.spanMin)*.1;});
+   if(delta.length()<=Math.max(1e-7,diagonal*1e-5,item.length*1e-5))status='aligned';
+   else if(Math.abs(item.axis.dot(frames.get(uuid)!.axis!))<Math.cos(surfaceAxisAngle)){status='uncertain';reason='surface-axis';}
+   else if(delta.length()>item.length*fittingShiftLimit){status='uncertain';reason='large-shift';}
    else if(item.sides.some(mass=>mass<central.mass*.08)){status='uncertain';reason='coverage';}
    else if(!stable){status='uncertain';reason='unstable-section';}
-   else {status=delta.length()>Math.max(1e-7,diagonal*1e-5,item.length*1e-5)?'suggested':'aligned';if(status==='suggested')target=candidate;}
+   else {status='suggested';target=candidate;}
   }
   return {uuid,name:root.getObjectByProperty('uuid',uuid)!.name,current:item.current.toArray(),target:target.toArray(),support:item.support.size,offset:target.distanceTo(item.current),length:item.length,status,...(reason?{reason}:{})};
  });

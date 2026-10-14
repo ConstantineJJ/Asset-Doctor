@@ -22,7 +22,7 @@ for(const name of ['RiggedSimple','Fox'])test(`Khronos ${name}: joint orientatio
  await page.getByLabel('Shading mode').selectOption('smooth');
  await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED',{timeout:30000});
  await test.info().attach(`${name}-editor.png`,{body:await page.screenshot(),contentType:'image/png'});
- const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Edited GLB',exact:true}).click()]);
+ const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Changes',exact:true}).click()]);
  const stream=await download.createReadStream(),chunks:Buffer[]=[];for await(const chunk of stream!)chunks.push(Buffer.from(chunk));const buffer=Buffer.concat(chunks);
  await test.info().attach(`${name}-edited.glb`,{body:buffer,contentType:'model/gltf-binary'});
  await page.locator('header input[type=file]').setInputFiles({name:`${name}-reopened.glb`,mimeType:'model/gltf-binary',buffer});await page.getByRole('button',{name:'Discard and open',exact:true}).click();await expect(page.getByText(`${name}-reopened.glb`,{exact:true})).toBeVisible();
