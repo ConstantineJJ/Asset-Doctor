@@ -7,11 +7,12 @@ import { mapChannels,parseGlb,cleanLegacyExtras,sourceNodeIndex,type RigExportPa
 
 export interface RigVerification {status:'VERIFIED'|'REGRESSION';reasons:string[];meshCount:number;clipCount:number;sampledVertices:number;phases:number[];sourcePreserved:boolean}
 export interface RigIdentity {uuid:string;node?:number;mesh?:number;primitive?:number;ancestor?:number}
-export function rigIdentities(root:THREE.Group):RigIdentity[] {
+export function rigIdentities(root:THREE.Group,created=new Map<string,number>()):RigIdentity[] {
   const identities:RigIdentity[]=[];
   root.traverse(node=>{
     const association=getSourceAssociation(node);
-    if(association)identities.push({uuid:node.uuid,node:association.nodes,mesh:association.meshes,primitive:association.primitives,ancestor:sourceNodeIndex(node)});
+    if(created.has(node.uuid))identities.push({uuid:node.uuid,node:created.get(node.uuid),ancestor:created.get(node.uuid)});
+    else if(association)identities.push({uuid:node.uuid,node:association.nodes,mesh:association.meshes,primitive:association.primitives,ancestor:sourceNodeIndex(node)});
   });return identities;
 }
 function key(identity:RigIdentity) {return identity.node!==undefined?`node:${identity.node}`:identity.mesh!==undefined?`node:${identity.ancestor}/mesh:${identity.mesh}/primitive:${identity.primitive}`:null;}
@@ -29,9 +30,9 @@ function restoreField(target:any,source:any,field:string) {if(Object.hasOwn(sour
 export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayBuffer) {
   const source=parseGlb(packet.source),candidate=parseGlb(output),expected=structuredClone(source.document),actual=structuredClone(candidate.document);
   close(candidate.binary.subarray(0,source.binary.length),source.binary,'Original GLB binary bytes',0);
-  const verifyStream=(index:number,oldIndex:number|undefined,values:Float32Array|Uint32Array|Uint16Array,type:string,count:number)=>{
+  const verifyStream=(index:number,oldIndex:number|undefined,values:Float32Array|Uint32Array|Uint16Array|Uint8Array,type:string,count:number)=>{
     const definition=candidate.document.accessors[index],old=oldIndex===undefined?{}:source.document.accessors[oldIndex],view=candidate.document.bufferViews[definition?.bufferView];
-    const componentType=values instanceof Float32Array?5126:values instanceof Uint16Array?5123:5125;
+    const componentType=values instanceof Float32Array?5126:values instanceof Uint8Array?5121:values instanceof Uint16Array?5123:5125;
     if(!definition||!view||definition.componentType!==componentType||definition.type!==type||definition.count!==count||definition.normalized||definition.sparse||(definition.byteOffset??0)!==0||view.buffer!==0||view.byteStride||view.extensions||(view.byteOffset??0)<source.binary.length||view.byteLength!==values.byteLength)throw new Error('Serialized replacement accessor descriptor differs.');
     const authorFields=(accessor:any)=>{
       const fields=structuredClone(accessor);
@@ -53,6 +54,24 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
       if(canonical(definition.min)!==canonical([min])||canonical(definition.max)!==canonical([max]))throw new Error('Replacement accessor bounds differ.');
     } else if(Object.hasOwn(definition,'min')||Object.hasOwn(definition,'max'))throw new Error('Unexpected replacement accessor bounds.');
   };
+  if(actual.nodes.length!==expected.nodes.length+packet.addedNodes.length)throw new Error('Added node count differs.');
+  for(const node of packet.addedNodes) {
+    const definition={name:node.name,translation:node.rest.position,rotation:node.rest.quaternion,scale:node.rest.scale,...(node.tip?{extras:{assetDoctorRigTip:{version:1,point:node.tip}}}:{})};
+    const child=packet.children.find(parent=>parent.index===node.index);
+    if(child?.children.length)Object.assign(definition,{children:child.children});
+    if(canonical(actual.nodes[node.index])!==canonical(definition))throw new Error('Added joint definition differs.');
+  }
+  for(const parent of packet.children) {
+    const definition=actual.nodes[parent.index];
+    if(parent.children.length?canonical(definition?.children)!==canonical(parent.children):Object.hasOwn(definition,'children'))throw new Error('Serialized joint hierarchy differs.');
+    if(parent.index<expected.nodes.length)restoreField(actual.nodes[parent.index],expected.nodes[parent.index],'children');
+  }
+  actual.nodes=actual.nodes.slice(0,expected.nodes.length);
+  for(const indices of packet.jointIndices) {
+    const before=expected.meshes[indices.mesh].primitives[indices.primitive],after=actual.meshes[indices.mesh].primitives[indices.primitive];
+    verifyStream(after.attributes.JOINTS_0,before.attributes.JOINTS_0,indices.values,'VEC4',indices.values.length/4);
+    restoreField(after.attributes,before.attributes,'JOINTS_0');
+  }
   for(const skin of packet.skins)if(skin.changed)verifyStream(candidate.document.skins[skin.index].inverseBindMatrices,source.document.skins[skin.index].inverseBindMatrices,new Float32Array(skin.inverses.flat()),'MAT4',skin.inverses.length);
   for(const channel of packet.channels)if(channel.changed) {
     const sourceAnimation=source.document.animations[channel.animation],animation=candidate.document.animations[channel.animation];
@@ -82,7 +101,11 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
       if(!Object.hasOwn(before,'extras')&&Object.keys(extras).length===0)delete definition.extras;
     }
   }
-  for(const skin of packet.skins)if(skin.changed)restoreField(actual.skins[skin.index],expected.skins[skin.index],'inverseBindMatrices');
+  for(const skin of packet.skins)if(skin.changed) {
+    if(canonical(actual.skins[skin.index].joints)!==canonical(skin.joints))throw new Error('Serialized skin joint order differs.');
+    restoreField(actual.skins[skin.index],expected.skins[skin.index],'inverseBindMatrices');
+    restoreField(actual.skins[skin.index],expected.skins[skin.index],'joints');
+  }
   for(const channel of packet.channels)if(channel.changed)actual.animations[channel.animation].channels[channel.channel].sampler=expected.animations[channel.animation].channels[channel.channel].sampler;
   for(const animation of packet.animationNames)if(animation.changed) {
     if(actual.animations[animation.index].name!==animation.name)throw new Error('Animation name differs.');
@@ -145,8 +168,10 @@ export async function verifyEditedRig(packet:RigExportPacket,output:ArrayBuffer,
     if(canonical([...actual.keys()].sort())!==canonical([...expected.keys()].sort()))throw new Error('Canonical node/primitive set differs.');
     expectedRoot.traverse(node=>{node.matrixAutoUpdate=true;node.updateMatrix();});expectedRoot.updateMatrixWorld(true);actualRoot.updateMatrixWorld(true);
     const meshPairs:[THREE.Mesh,THREE.Mesh][]=[];
+    const parentKey=(node:THREE.Object3D,map:Map<string,THREE.Object3D>)=>[...map].find(([,parent])=>parent===node.parent)?.[0]??null;
     for(const [id,left] of expected) {
       const right=actual.get(id)!;
+      if(parentKey(left,expected)!==parentKey(right,actual))throw new Error('Joint/node parent differs.');
       const rotation=right.quaternion.toArray();
       if(left.quaternion.dot(right.quaternion)<0)for(let i=0;i<rotation.length;i++)rotation[i]=-rotation[i];
       close(left.position.toArray(),right.position.toArray(),`${id} rest translation`);close(left.quaternion.toArray(),rotation,`${id} rest rotation`);close(left.scale.toArray(),right.scale.toArray(),`${id} rest scale`);

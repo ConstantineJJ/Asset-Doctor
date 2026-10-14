@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { TopToolbar } from './components/TopToolbar';
 import { SceneTreePanel } from './components/SceneTreePanel';
@@ -6,6 +6,8 @@ import { Viewport } from './components/Viewport';
 import { InspectorPanel } from './components/InspectorPanel';
 import { AnimationTimeline } from './components/AnimationTimeline';
 import { RigEditorPanel } from './components/RigEditorPanel';
+import {RigJointMenu} from './components/RigJointMenu';
+import {jointDeleteMessage} from './rig/RigMessages';
 import type { RigEditSession,RigMode } from './rig/RigEditSession';
 import type { RigGizmoSettings } from './rig/RigGizmo';
 import { RigExportService,type RigExportResult } from './rig/RigExportService';
@@ -100,6 +102,8 @@ export function App() {
   const [rigError,setRigError]=useState<string|null>(null);
   const [rigDragging,setRigDragging]=useState(false);
   const [rigSettings,setRigSettings]=useState<RigGizmoSettings>({tool:'translate',space:'local',target:'joint',childPolicy:'follow'});
+  const [rigContext,setRigContext]=useState<{uuid:string;x:number;y:number}|null>(null);
+  const closeRigContext=useCallback(()=>setRigContext(null),[]);
   const [savedExport, setSavedExport] = useState<RepairedExportResult | null>(null);
   if (!healEngineRef.current) {
     healEngineRef.current = new SurgicalHealEngine();
@@ -566,6 +570,7 @@ export function App() {
           onRigChanged:publishRigChange,
           onRigError:setRigError,
           onRigDrag:setRigDragging,
+          onRigContextMenu:setRigContext,
           onMeshSelected: (uuid) => {
             setSelectedUuid(uuid);
           },
@@ -898,6 +903,9 @@ export function App() {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
     if (!root || !engine || healBusyRef.current) return null;
+    if(!undo&&rigSessionRef.current?.hasJointIndexEdits) {
+      setHealError(language==='ru'?'Сначала сохраните и заново откройте GLB после удаления сустава.':'Export and reimport the GLB after joint deletion before applying repairs.');return null;
+    }
     healBusyRef.current = true;
     setHealBusy(true);
     setHealError(null);
@@ -1411,12 +1419,35 @@ export function App() {
   const handleRigAction=(action:(session:RigEditSession)=>void,undo=false)=>{
     const session=rigSessionRef.current;
     if(!session||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
-    setRigError(null);sceneManagerRef.current?.detachRigMixer();rigUndoingRef.current=undo;
-    try {action(session);sceneManagerRef.current?.syncRigClips();publishRigChange();}
-    catch(error){sceneManagerRef.current?.syncRigClips();setRigError(error instanceof Error?error.message:String(error));}
+    setRigContext(null);setRigError(null);sceneManagerRef.current?.detachRigMixer();rigUndoingRef.current=undo;
+    try {action(session);sceneManagerRef.current?.refreshRigStructure();sceneManagerRef.current?.syncRigClips();publishRigChange();}
+    catch(error){sceneManagerRef.current?.syncRigClips();setRigError(jointDeleteMessage(error instanceof Error?error.message:String(error),language));}
     finally {rigUndoingRef.current=false;}
   };
   const handleUndoRig=()=>handleRigAction(session=>session.undo(),true);
+  const handleRigMode=(mode:RigMode)=>{
+    setRigError(null);setRigContext(null);
+    try {
+      const source=currentExportSourceRef.current,session=rigSessionRef.current;
+      if(mode==='edit'&&session&&source?.kind==='buffer')buildRigExportPacket(session,source.buffer,healEngineRef.current?.getActiveReports(),mesh=>sceneManagerRef.current!.renderModeManager.authoredGeometry(mesh));
+      sceneManagerRef.current?.setRigMode(mode);setRigVersion(value=>value+1);if(mode!=='inspect')handleSetSkeletonVisible(true);
+    }catch(error){setRigError(error instanceof Error?error.message:String(error));}
+  };
+  const handleAddJoint=(uuid=selectedUuid)=>{
+    setRigContext(null);if(!uuid)return;
+    handleRigAction(session=>{const added=session.addJoint(uuid);sceneManagerRef.current?.selectObject(added);});
+  };
+  const handleDeleteJoint=(uuid=selectedUuid)=>{
+    setRigContext(null);if(!uuid)return;
+    handleRigAction(session=>{
+      if(healEngineRef.current?.getActiveReports().length)throw new Error('Export and reimport verified repairs before deleting a joint.');
+      const manager=sceneManagerRef.current!,root=currentAssetRootRef.current!;
+      let presentationGeometry=false;root.traverse(node=>{if(node instanceof THREE.Mesh&&manager.renderModeManager.authoredGeometry(node)!==node.geometry)presentationGeometry=true;});
+      if(presentationGeometry)throw new Error('Return to Hybrid shading before deleting a joint.');
+      const parent=session.root.getObjectByProperty('uuid',uuid)?.parent;
+      session.deleteJoint(uuid);manager.selectObject(parent?.uuid??null);
+    });
+  };
 
   // Ctrl+Z uses model histories; text fields retain their native text Undo.
   useEffect(() => {
@@ -1449,8 +1480,24 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   });
 
+  const selectedDeleteReason=useMemo(()=>{
+    const session=rigSessionRef.current;
+    if(!session||!selectedUuid)return null;
+    if(healEngineRef.current?.getActiveReports().length)return 'Export and reimport verified repairs before deleting a joint.';
+    return session.deletionBlockReason(selectedUuid);
+  },[selectedUuid,rigSessionRef.current,rigSessionRef.current?.revision,healReport]);
+  const rigBusy=healBusy||exportBusy||rigDragging||repairQueueState.status==='running';
+  const rigEditorProps={session:rigSessionRef.current,selectedUuid,settings:rigSettings,activeClipIndex,busy:rigBusy,enabled:currentExportSourceRef.current?.kind==='buffer'&&/\.glb$/i.test(fileName),error:rigError,exportResult:rigExportResult,
+    onVerifyExport:()=>void handleRigExport(false),onSaveExport:()=>void handleRigExport(true),onMode:handleRigMode,onAction:handleRigAction,onUndo:handleUndoRig,
+    onAddJoint:()=>handleAddJoint(),onDeleteJoint:()=>handleDeleteJoint(),deleteReason:jointDeleteMessage(selectedDeleteReason,language),
+    onPreview:(uuid:string,quaternion:number[])=>{setRigError(null);try{sceneManagerRef.current?.previewRigRotation(uuid,quaternion);}catch(error){setRigError(error instanceof Error?error.message:String(error));}},
+    onSettings:(settings:RigGizmoSettings)=>{setRigSettings(settings);sceneManagerRef.current?.setRigGizmoSettings(settings);}
+  };
+  const contextBone=rigContext&&rigSessionRef.current?.root.getObjectByProperty('uuid',rigContext.uuid);
+  const contextReason=rigSessionRef.current?.mode!=='edit'?'Enter Edit Skeleton before changing joints.':selectedDeleteReason;
   return (
     <div className="asset-doctor-ui flex flex-col h-screen w-screen bg-[#131518] text-gray-100 overflow-hidden font-sans select-none">
+      {rigContext&&contextBone&&<RigJointMenu joint={{...rigContext,name:contextBone.name}} reason={jointDeleteMessage(contextReason,language)} busy={rigBusy||rigSessionRef.current?.mode!=='edit'} onClose={closeRigContext} onAdd={()=>handleAddJoint(rigContext.uuid)} onDelete={()=>handleDeleteJoint(rigContext.uuid)} />}
       {/* Top Application Toolbar */}
       <TopToolbar
         onPickFile={isDesktop() ? handlePickFile : undefined}
@@ -1463,8 +1510,6 @@ export function App() {
         onSetRenderMode={handleSetRenderMode}
         lightingPreset={lightingPreset}
         onSetLightingPreset={handleSetLightingPreset}
-        surface={surface}
-        onSetSurface={handleSetSurface}
         isTreeCollapsed={isTreeCollapsed}
         onToggleTreeCollapse={handleToggleTreeCollapse}
         autoRotate={autoRotate}
@@ -1500,6 +1545,7 @@ export function App() {
 
         {/* Center: 3D Viewport with Drag & Drop */}
         <Viewport
+          rigToolbar={<RigEditorPanel {...rigEditorProps} variant="tools" />}
           onCanvasMount={handleCanvasMount}
           onFileDrop={requestOpenFile}
           isLoading={isLoading}
@@ -1524,19 +1570,7 @@ export function App() {
         {/* Right: Technical Inspector & Diagnostic Panel */}
         <InspectorPanel
           animationClips={animationClips} activeClipIndex={activeClipIndex} onSelectClip={handleSelectClip} animationBusy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} clipSourceKey={rigSessionRef.current?.root.uuid??fileName}
-          rigEditor={<RigEditorPanel session={rigSessionRef.current} selectedUuid={selectedUuid} settings={rigSettings} activeClipIndex={activeClipIndex} busy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} enabled={currentExportSourceRef.current?.kind==='buffer' && /\.glb$/i.test(fileName)} error={rigError} exportResult={rigExportResult} onVerifyExport={()=>void handleRigExport(false)} onSaveExport={()=>void handleRigExport(true)}
-            onPreview={(uuid,quaternion)=>{setRigError(null);try{sceneManagerRef.current?.previewRigRotation(uuid,quaternion);}catch(error){setRigError(error instanceof Error?error.message:String(error));}}}
-            onMode={(mode:RigMode)=>{
-              setRigError(null);
-              try {
-                const source=currentExportSourceRef.current,session=rigSessionRef.current;
-                if(mode==='edit'&&session&&source?.kind==='buffer')buildRigExportPacket(session,source.buffer,healEngineRef.current?.getActiveReports(),mesh=>sceneManagerRef.current!.renderModeManager.authoredGeometry(mesh));
-                sceneManagerRef.current?.setRigMode(mode);setRigVersion(value=>value+1);if(mode!=='inspect')handleSetSkeletonVisible(true);
-              }catch(error){setRigError(error instanceof Error?error.message:String(error));}
-            }}
-            onSettings={settings=>{setRigSettings(settings);sceneManagerRef.current?.setRigGizmoSettings(settings);}}
-            onAction={handleRigAction} onUndo={handleUndoRig}
-          />}
+          rigEditor={<RigEditorPanel {...rigEditorProps} />}
           summary={summary}
           healthIssues={healthIssues}
           progressiveState={progressiveState}

@@ -93,7 +93,7 @@ export function HealReportPanel({
             </button>
           )}
           <button
-            onClick={onDismiss}
+            data-tone="danger" onClick={onDismiss}
             className="p-0.5 text-gray-400 hover:text-white cursor-pointer"
             title={t('heal.dismiss')}
           >
@@ -143,7 +143,7 @@ export function HealReportPanel({
       <p className="text-[10px] text-gray-400">{t(`heal.report.pipeline_${report.pipeline}`)}</p>
       {storageFailed && <p role="alert" className="text-[11px] text-amber-300">{t('heal.report.storageFailed')}</p>}
       {error && <p role="alert" className="text-[11px] text-rose-300">{error}</p>}
-      {undoState.available && <button onClick={onUndo} disabled={busy}
+      {undoState.available && <button data-tone="danger" onClick={onUndo} disabled={busy}
         className="px-2 py-1 border rounded text-[11px] disabled:opacity-40 cursor-pointer">
         {t('heal.undo')} · {undoState.meshName}
       </button>}
@@ -269,7 +269,7 @@ export function HealReportPanel({
               <div className="flex items-center gap-1.5 pt-1">
                 {exportReport.status === 'VERIFIED' && (
                   <button
-                    onClick={onDownloadExport}
+                    data-tone="edit" onClick={onDownloadExport}
                     disabled={exportBusy || busy}
                     className="px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-medium cursor-pointer text-[10px]"
                   >

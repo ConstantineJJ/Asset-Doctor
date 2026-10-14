@@ -538,7 +538,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <div className="flex flex-wrap items-center gap-1.5">
                 {repairQueueState.status === 'running' ? (
                   <button
-                    onClick={onStopRepairQueue}
+                    data-tone="danger" onClick={onStopRepairQueue}
                     className="px-2 py-1 rounded border border-amber-800 bg-amber-950/30 text-amber-300 hover:text-white cursor-pointer text-[10px]"
                   >
                     {t('heal.queue.stop')}
@@ -555,7 +555,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     {healPreview?.status === 'READY' && (
                       <button
                         disabled={healBusy}
-                        onClick={onApplyHeal}
+                        data-tone="edit" onClick={onApplyHeal}
                         className="px-2 py-1 rounded border border-emerald-800 bg-emerald-950/30 text-emerald-300 hover:text-white disabled:opacity-40 cursor-pointer text-[10px]"
                       >
                         {t('heal.queue.applyNext')}
@@ -563,7 +563,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     )}
                     <button
                       disabled={healBusy || repairQueue.length === 0 || progressiveState.topology === 'running'}
-                      onClick={onRunRepairQueue}
+                      data-tone="edit" onClick={onRunRepairQueue}
                       className="px-2 py-1 rounded border border-[#46505f] bg-[#242932] text-gray-200 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-[10px]"
                     >
                       {t('heal.queue.run')}
@@ -964,13 +964,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                               <div className="flex items-center gap-1.5 pt-1">
                                 <button
                                   disabled={healBusy}
-                                  onClick={onApplyHeal}
+                                  data-tone="edit" onClick={onApplyHeal}
                                   className="px-2 py-1 rounded bg-amber-700 hover:bg-amber-600 text-white font-medium cursor-pointer"
                                 >
                                   {t('heal.apply')}
                                 </button>
                                 <button
-                                  onClick={onCancelHealPreview}
+                                  data-tone="danger" onClick={onCancelHealPreview}
                                   className="px-2 py-1 rounded bg-[#242730] border border-[#343845] text-gray-300 hover:text-white cursor-pointer"
                                 >
                                   {t('heal.cancel')}
@@ -983,7 +983,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                 {healPreview.reasonKey ? t(healPreview.reasonKey) : healPreview.reason || t('heal.blocked')}
                               </div>
                               <button
-                                onClick={onCancelHealPreview}
+                                data-tone="danger" onClick={onCancelHealPreview}
                                 className="px-2 py-1 rounded bg-[#242730] border border-[#343845] text-gray-300 hover:text-white cursor-pointer"
                               >
                                 {t('heal.closePreview')}
@@ -1271,9 +1271,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
           {rigEditor}
           {selectedBoneInfo && (
-            <div className="bg-[#1c1e24] border border-amber-900/60 rounded p-2.5 space-y-2">
+            <div className="bg-[#1c1e24] border border-blue-700/60 rounded p-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <h4 className="font-semibold text-amber-300 uppercase tracking-wider text-[10px]">
+                <h4 className="font-semibold text-blue-200 uppercase tracking-wider text-[10px]">
                   Selected Bone
                 </h4>
                 <span className="font-mono text-[9px] text-gray-500">{selectedBoneInfo.name}</span>

@@ -17,6 +17,7 @@ import { CompareViewport } from './CompareViewport';
 import { useI18n } from '../i18n';
 
 interface ViewportProps {
+  rigToolbar?:React.ReactNode;
   onCanvasMount: (container: HTMLElement) => void | (() => void);
   onFileDrop: (file: File) => void;
   isLoading: boolean;
@@ -37,6 +38,7 @@ interface ViewportProps {
 }
 
 export const Viewport: React.FC<ViewportProps> = ({
+  rigToolbar,
   onCanvasMount,
   onFileDrop,
   isLoading,
@@ -152,7 +154,7 @@ export const Viewport: React.FC<ViewportProps> = ({
 
           {isLightBulbVisible && (
             <div
-              className="hidden sm:flex items-center gap-1.5 bg-amber-950/70 border border-amber-600/60 px-2 py-1 rounded text-[11px] text-amber-200 shadow-md animate-pulse cursor-help"
+              className="hidden sm:flex items-center gap-1.5 bg-blue-950/70 border border-blue-600/60 px-2 py-1 rounded text-[11px] text-blue-200 shadow-md animate-pulse cursor-help"
               title={
                 language === 'ru'
                   ? 'Лампочка видна в сцене! Перетаскивайте её мышкой прямо во вьюпорте.'
@@ -170,11 +172,12 @@ export const Viewport: React.FC<ViewportProps> = ({
 
       {/* Top Right: Compare button & Quick Surface menu */}
       {!compareOpen && (
-        <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+        <div className="absolute top-3 right-3 z-40 flex items-center gap-2">
           {/* Surface quick switcher */}
           {onSetSurface && (
             <div className="relative">
               <button
+                aria-label="Ground surface" aria-expanded={showSurfaceMenu}
                 onClick={() => setShowSurfaceMenu(!showSurfaceMenu)}
                 className="flex items-center gap-1.5 rounded-md border border-[#3b414d] bg-[#1a1c22]/90 backdrop-blur-xs px-2.5 py-1.5 text-xs font-medium text-gray-200 hover:border-cyan-500 hover:text-white transition shadow-md cursor-pointer"
                 title={language === 'ru' ? 'Выбрать поверхность пола' : 'Choose ground surface'}
@@ -193,6 +196,8 @@ export const Viewport: React.FC<ViewportProps> = ({
                   </div>
                   {surfaces.map((s) => (
                     <button
+                      aria-pressed={surface===s.id}
+                      aria-label={language==='ru'?s.labelRu:s.labelEn}
                       key={s.id}
                       onClick={() => {
                         onSetSurface(s.id);
@@ -252,8 +257,9 @@ export const Viewport: React.FC<ViewportProps> = ({
       )}
 
       {/* Model presentation is separate from bottom animation transport. */}
+      <div className="absolute top-14 left-3 right-3 z-20 flex flex-col items-start gap-3 max-h-[65%] overflow-y-auto custom-scrollbar">
       {fileName && !compareOpen && onSetModelRotation && (
-        <div data-testid="model-rotation-controls" className="absolute top-14 left-3 z-20 flex flex-wrap max-w-[calc(100%_-_1.5rem)] items-center gap-2 bg-[#181a20]/95 border border-[#58626e] px-2 py-1.5 rounded text-xs text-gray-200">
+        <div data-testid="model-rotation-controls" className="flex flex-wrap max-w-full items-center gap-2 bg-[#181a20]/95 border border-[#58626e] px-2 py-1.5 rounded text-xs text-gray-200 shrink-0">
           {/* Turntable Auto-Rotate Play/Pause */}
           {onToggleAutoRotate && (
             <button
@@ -342,6 +348,8 @@ export const Viewport: React.FC<ViewportProps> = ({
           )}
         </div>
       )}
+      {!compareOpen&&rigToolbar&&<div className="w-full">{rigToolbar}</div>}
+      </div>
 
       {/* Bottom Left: Mouse control tips */}
       {!compareOpen && (

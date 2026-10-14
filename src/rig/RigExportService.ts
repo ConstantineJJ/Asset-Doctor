@@ -31,7 +31,7 @@ export class RigExportService {
       if(node instanceof THREE.SkinnedMesh)binds.push({mesh:node,matrix:node.bindMatrix.toArray(),inverses:node.skeleton.boneInverses.map(matrix=>matrix.toArray())});
     });
     const clipSignature=JSON.stringify(packClips(session.clips),(_key,value)=>ArrayBuffer.isView(value)?Array.from(value as any):value);
-    const result=await this.compute.request<{buffer:ArrayBuffer;verification:RigVerification}>({patch,root,clips:packClips(authored.clips),identities:rigIdentities(session.root),resourceBaseUrl:typeof window!=='undefined'?new URL('./',window.location.href).href:undefined});
+    const result=await this.compute.request<{buffer:ArrayBuffer;verification:RigVerification}>({patch,root,clips:packClips(authored.clips),identities:rigIdentities(session.root,session.exportNodeIndices()),resourceBaseUrl:typeof window!=='undefined'?new URL('./',window.location.href).href:undefined});
     const stillCurrent=()=>{
       if(session.isGestureActive)return false;
       if(session.revision!==revision || geometries.some(({mesh,geometry,snapshot})=>geometrySource(mesh)!==geometry||!geometryMatches(geometry,snapshot)) || binds.some(({mesh,matrix,inverses})=>JSON.stringify([mesh.bindMatrix.toArray(),mesh.skeleton.boneInverses.map(matrix=>matrix.toArray())])!==JSON.stringify([matrix,inverses])) || JSON.stringify(packClips(session.clips),(_key,value)=>ArrayBuffer.isView(value)?Array.from(value as any):value)!==clipSignature)return false;

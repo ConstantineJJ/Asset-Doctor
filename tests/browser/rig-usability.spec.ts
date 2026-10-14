@@ -1,3 +1,4 @@
+import {openJointDetails,closeJointDetails} from './rig-toolbar-probe';
 import { test, expect, type Page } from '@playwright/test';
 import { rigFixture } from '../rig-fixtures';
 import { rigViewerState } from './rig-runtime-probe';
@@ -144,8 +145,8 @@ test('Clip rename is undoable and survives verified GLB download and actual reim
 
 test('Ctrl+Z respects text input focus and performs rig Undo after focus leaves the input', async ({ page }) => {
   await openRig(page); const root = await selectRoot(page);
-  await page.getByLabel('Joint position X', { exact: true }).fill('1.4');
-  await page.getByRole('button', { name: 'Apply Position', exact: true }).click();
+  await openJointDetails(page); await page.getByLabel('Joint position X', { exact: true }).fill('1.4');
+  await page.getByRole('button', { name: 'Apply Position', exact: true }).click(); await closeJointDetails(page);
   const before = await rigViewerState(page); expect(before.revision).toBe(1);
   const name = page.getByLabel('Animation clip name', { exact: true });
   await name.click(); await name.press('Control+a'); await name.pressSequentially('Draft typing'); await name.press('Control+z');
@@ -191,8 +192,8 @@ test('Ctrl+Z undoes the most recent authored domain across interleaved Repair an
     const joint = (await rigViewerState(page)).bones.find(bone => bone.uuid === original.uuid)!;
     await page.mouse.click(...joint.screen as [number, number]);
     await expect.poll(async () => (await rigViewerState(page)).selected).toBe(original.uuid);
-    await page.getByLabel('Joint position X', { exact: true }).fill(String(x));
-    await page.getByRole('button', { name: 'Apply Position', exact: true }).click();
+    await openJointDetails(page); await page.getByLabel('Joint position X', { exact: true }).fill(String(x));
+    await page.getByRole('button', { name: 'Apply Position', exact: true }).click(); await closeJointDetails(page);
     await expect.poll(async () => (await rigViewerState(page)).bones.find(bone => bone.uuid === original.uuid)!.position[0]).toBe(x);
   };
   const undoShortcut = async () => {
@@ -214,19 +215,19 @@ test('Ctrl+Z undoes the most recent authored domain across interleaved Repair an
 test('Select tool hides the gizmo and picks a joint at a point previously occupied by its Move handle', async ({ page }) => {
   await openRig(page); await selectRoot(page);
   await page.getByLabel('Rig coordinates', { exact: true }).selectOption('local');
-  await page.getByLabel('Rig tool', { exact: true }).selectOption('translate');
+  await page.getByTestId('rig-tool-translate').click();
   const side = (await rigViewerState(page)).bones.find(bone => bone.name === 'Side')!;
-  await page.getByLabel('End child joint', { exact: true }).selectOption(side.uuid);
+  await openJointDetails(page); await page.getByLabel('End child joint', { exact: true }).selectOption(side.uuid);
   await expect.poll(async () => (await usabilityState(page)).overlapLength).not.toBeNull();
   const length = (await usabilityState(page)).overlapLength!;
   expect(length).toBeGreaterThan(0);
   // Position the real child at the rendered X handle, through the public editor.
-  await page.getByLabel('Bone length', { exact: true }).fill(String(length));
-  await page.getByRole('button', { name: 'Apply Length', exact: true }).click();
+  await openJointDetails(page); await page.getByLabel('Bone length', { exact: true }).fill(String(length));
+  await page.getByRole('button', { name: 'Apply Length', exact: true }).click(); await closeJointDetails(page);
   const before = await rigViewerState(page); const target = before.bones.find(bone => bone.uuid === side.uuid)!;
   await page.mouse.move(...target.screen as [number, number]);
   await expect.poll(async () => (await usabilityState(page)).axis).toBe('X');
-  await page.getByLabel('Rig tool', { exact: true }).selectOption('select');
+  await page.getByTestId('rig-tool-select').click();
   await expect.poll(async () => (await usabilityState(page)).gizmoVisible).toBe(false);
   await page.mouse.click(...target.screen as [number, number]);
   await expect.poll(async () => (await rigViewerState(page)).selected).toBe(side.uuid);
@@ -240,9 +241,10 @@ test('A real local Twist drag rotates around the selected child direction and ha
   await openRig(page); const root = await selectRoot(page);
   const side = (await rigViewerState(page)).bones.find(bone => bone.name === 'Side')!;
   // Side lies on local X, so a hard-coded Y twist cannot pass this regression.
-  await page.getByLabel('End child joint', { exact: true }).selectOption(side.uuid);
+  await openJointDetails(page); await page.getByLabel('End child joint', { exact: true }).selectOption(side.uuid);
   await page.getByLabel('Rig coordinates', { exact: true }).selectOption('local');
-  await page.getByLabel('Rig tool', { exact: true }).selectOption('twist');
+  await page.getByTestId('rig-tool-twist').click();
+  await closeJointDetails(page);
   await expect.poll(async () => (await usabilityState(page, true)).ringPoints.length).toBeGreaterThan(0);
   const probe = await usabilityState(page, true);
   let start: [number, number] | undefined;
@@ -274,9 +276,10 @@ test('Turntable pauses throughout an actual Twist gesture without adding present
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await openRig(page); const root = await selectRoot(page);
   const side = (await rigViewerState(page)).bones.find(bone => bone.name === 'Side')!;
-  await page.getByLabel('End child joint', { exact: true }).selectOption(side.uuid);
+  await openJointDetails(page); await page.getByLabel('End child joint', { exact: true }).selectOption(side.uuid);
   await page.getByLabel('Rig coordinates', { exact: true }).selectOption('local');
-  await page.getByLabel('Rig tool', { exact: true }).selectOption('twist');
+  await page.getByTestId('rig-tool-twist').click();
+  await closeJointDetails(page);
   const before = await rigViewerState(page); const angleBefore = (await usabilityState(page)).modelRotationY;
   await page.getByTitle('Start turntable auto-rotation', { exact: true }).click();
   await expect.poll(async () => (await usabilityState(page)).modelRotationY).not.toBe(angleBefore);
@@ -318,7 +321,7 @@ test('Turntable pauses throughout an actual Twist gesture without adding present
 
 test('Ctrl+Z does not undo the hidden Doctor asset while Compare is open',async({page})=>{
   await openRig(page);const root=await selectRoot(page);
-  await page.getByLabel('Joint position X',{exact:true}).fill('1.4');await page.getByRole('button',{name:'Apply Position',exact:true}).click();
+  await openJointDetails(page); await page.getByLabel('Joint position X',{exact:true}).fill('1.4');await page.getByRole('button',{name:'Apply Position',exact:true}).click(); await closeJointDetails(page);
   const before=await rigViewerState(page);await page.getByRole('button',{name:'Compare',exact:true}).click();
   await expect(page.locator('[data-active-view="compare"]')).toBeVisible();await page.keyboard.press('Control+z');
   expect((await rigViewerState(page)).revision).toBe(before.revision);expect((await rigViewerState(page)).bones.find(bone=>bone.uuid===root.uuid)!.position).toEqual([1.4,2,0]);
@@ -326,9 +329,9 @@ test('Ctrl+Z does not undo the hidden Doctor asset while Compare is open',async(
   await page.keyboard.press('Control+z');await expect.poll(async()=>(await rigViewerState(page)).bones.find(bone=>bone.uuid===root.uuid)!.position).toEqual(root.position);
 });
 
-test('Version 2.0.0 is visible and model rotation controls occupy the top of the viewport above playback', async ({ page }) => {
+test('Version 2.0.1 is visible and model rotation controls occupy the top of the viewport above playback', async ({ page }) => {
   await openRig(page);
-  await expect(page.getByText(/\b2\.0\.0\b/).first()).toBeVisible();
+  await expect(page.getByText(/\b2\.0\.1\b/).first()).toBeVisible();
   const rotation = page.getByTestId('model-rotation-controls'); await expect(rotation).toBeVisible();
   const controls = (await rotation.boundingBox())!, viewport = (await page.locator('canvas:visible').first().boundingBox())!;
   const play = (await page.getByTitle('Play', { exact: true }).boundingBox())!;

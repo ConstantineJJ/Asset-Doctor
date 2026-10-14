@@ -8,7 +8,10 @@ export interface ChannelPacket {animation:number;channel:number;times:Float32Arr
 export interface RigExportPacket {
   source:ArrayBuffer;
   nodes:{index:number;rest:NodeRest;changed:boolean;tip?:number[]}[];
-  skins:{index:number;inverses:number[][];changed:boolean}[];
+  skins:{index:number;inverses:number[][];joints:number[];changed:boolean}[];
+  addedNodes:{index:number;name:string;rest:NodeRest;tip?:number[]}[];
+  children:{index:number;children:number[]}[];
+  jointIndices:{mesh:number;primitive:number;values:Uint8Array|Uint16Array}[];
   channels:ChannelPacket[];
   animationNames:{index:number;name:string;changed:boolean}[];
   repairs:{node:number;mesh:number;primitive:number;operations:string[];index?:Uint32Array;attributes:Record<string,{values:Float32Array;size:number}>}[];
@@ -87,29 +90,61 @@ function logicalFloats(attribute:THREE.BufferAttribute|THREE.InterleavedBufferAt
 export function buildRigExportPacket(session:RigEditSession,source:ArrayBuffer,healReports:HealOperationReport[]=[],geometryResolver:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry):RigExportPacket {
   if(session.isGestureActive)throw new Error('Finish the joint drag before building an export.');
   const {document}=parseGlb(source),state=session.snapshot(),original=session.originalSnapshot();
+  const generated=session.exportNodeIndices();
+  const nodeIndex=(node:THREE.Object3D)=>generated.get(node.uuid)??getSourceAssociation(node)?.nodes;
   // Three.js renders four influences. Additional sets cannot receive honest deformation verification.
   for(const mesh of document.meshes??[]) for(const primitive of mesh.primitives??[]) if(Object.keys(primitive.attributes??{}).some(key=>/^(JOINTS|WEIGHTS)_[1-9]/.test(key))) throw new Error('Additional skin influence sets require an extended deformation verifier.');
   const currentChannels=mapChannels(session.root,state.clips,document),originalChannels=mapChannels(session.root,original.clips,document);
-  const nodes:RigExportPacket['nodes']=[],skins:RigExportPacket['skins']=[],repairs:RigExportPacket['repairs']=[];
+  const nodes:RigExportPacket['nodes']=[],skins:RigExportPacket['skins']=[],repairs:RigExportPacket['repairs']=[],addedNodes:RigExportPacket['addedNodes']=[],children:RigExportPacket['children']=[],jointIndices:RigExportPacket['jointIndices']=[];
   const seen=new Map<number,NodeRest>(),seenSkins=new Map<number,number[][]>();
+  const jointOrders=new Map<number,number[]>(),primitiveJoints=new Map<string,Uint8Array|Uint16Array>();
   session.root.traverse(node=>{
     const association=getSourceAssociation(node),rest=state.nodes.get(node.uuid),before=original.nodes.get(node.uuid);
-    if(!rest || !before)return;
-    if(association?.nodes!==undefined) {
+    if(!rest)return;
+    const index=nodeIndex(node);
+    if(generated.has(node.uuid))addedNodes.push({index:index!,name:node.name,rest,tip:state.tips.get(node.uuid)});
+    else if(!before)throw new Error('An active added node has no structural export identity.');
+    else if(association?.nodes!==undefined) {
       const index=association.nodes,existing=seen.get(index);
       if(existing&&!sameRest(existing,rest))throw new Error('Instances of one source node have conflicting edited transforms.');
       if(!existing) {seen.set(index,rest);nodes.push({index,rest,changed:!sameRest(rest,before),tip:state.tips.get(node.uuid)});}
     } else if(!sameRest(rest,before)) throw new Error('An edited generated attachment has no source node.');
+    if(index!==undefined) {
+      const activeChildren=node.children.map(nodeIndex).filter((id):id is number=>id!==undefined);
+      const oldChildren=generated.has(node.uuid)?[]:(document.nodes[index].children??[]);
+      if(!equal(activeChildren,oldChildren))children.push({index,children:activeChildren});
+    }
     if(node instanceof THREE.SkinnedMesh) {
-      const nodeIndex=sourceNodeIndex(node),index=document.nodes?.[nodeIndex!]?.skin;
+      const meshNodeIndex=sourceNodeIndex(node),index=document.nodes?.[meshNodeIndex!]?.skin;
       if(index===undefined)throw new Error('Skinned mesh has no source skin.');
       const sourceSkin=document.skins[index],inverses=state.skins.get(node.skeleton)!,old=original.skins.get(node.skeleton)!;
-      if(!equal(sourceSkin.joints,node.skeleton.bones.map(bone=>getSourceAssociation(bone)?.nodes??-1)))throw new Error('Source joint order differs from runtime skin.');
+      const originalJoints=original.joints.get(node.skeleton)!.map(id=>session.sourceNodeIndexFor(id)??-1);
+      if(!equal(sourceSkin.joints,originalJoints))throw new Error('Source joint order differs from the baseline skin.');
+      const joints=node.skeleton.bones.map(bone=>nodeIndex(bone)??-1);
+      if(joints.some(index=>index<0))throw new Error('A joint has no source or added-node identity.');
       const existing=seenSkins.get(index);
       if(existing&&!equal(existing.flat(),inverses.flat(),1e-8))throw new Error('Instances of one source skin require conflicting IBMs.');
-      if(!existing) {seenSkins.set(index,inverses);skins.push({index,inverses,changed:!equal(old.flat(),inverses.flat())});}
+      if(jointOrders.has(index)&&!equal(jointOrders.get(index)!,joints))throw new Error('Instances of one source skin require conflicting joint orders.');
+      if(!existing) {seenSkins.set(index,inverses);jointOrders.set(index,joints);skins.push({index,inverses,joints,changed:!equal(old.flat(),inverses.flat())||!equal(sourceSkin.joints,joints)});}
     }
     if(!(node instanceof THREE.Mesh))return;
+    if(node instanceof THREE.SkinnedMesh&&original.geometries.get(node.uuid)!==node.geometry) {
+      const oldGeometry=original.geometries.get(node.uuid),oldIndex=oldGeometry?.getAttribute('skinIndex'),currentIndex=node.geometry.getAttribute('skinIndex');
+      if(oldIndex&&currentIndex) {
+        const values=logicalFloats(currentIndex).values;
+        const baseline=logicalFloats(oldIndex).values;
+        if(!equal(values,baseline)) {
+          if(association?.meshes===undefined||association.primitives===undefined)throw new Error('Changed joint indices have no canonical primitive.');
+          const primitive=document.meshes[association.meshes].primitives[association.primitives],accessor=document.accessors[primitive.attributes.JOINTS_0];
+          if(primitive.extensions?.KHR_draco_mesh_compression||![5121,5123].includes(accessor.componentType))throw new Error('Joint-index preservation requires an uncompressed UBYTE/USHORT source accessor.');
+          const typed=accessor.componentType===5121?Uint8Array.from(values):Uint16Array.from(values);
+          if(!equal(values,typed))throw new Error('Joint indices exceed their source component type.');
+          const key=`${association.meshes}:${association.primitives}`,prior=primitiveJoints.get(key);
+          if(prior&&!equal(prior,typed))throw new Error('Shared source primitive requires conflicting joint indices.');
+          if(!prior){primitiveJoints.set(key,typed);jointIndices.push({mesh:association.meshes,primitive:association.primitives,values:typed});}
+        }
+      }
+    }
     const reports=healReports.filter(report=>report.meshUuid===node.uuid && !report.undoneAt);
     if(!reports.length)return;
     if(reports.some(report=>report.status!=='VERIFIED'||report.pipeline!=='complete'))throw new Error('Combined export requires a current VERIFIED repair session.');
@@ -133,7 +168,7 @@ export function buildRigExportPacket(session:RigEditSession,source:ArrayBuffer,h
     return {animation,channel,times:Float32Array.from(track.times),values:Float32Array.from(track.values),interpolation,size:track.getValueSize()/(isGltfCubic(track)?3:1),changed:!equal(track.times,before.times)||!equal(track.values,before.values)};
   }));
   const animationNames=state.clips.map((clip,index)=>({index,name:clip.name,changed:clip.name!==original.clips[index].name}));
-  return {source:source.slice(0),nodes,skins,channels,animationNames,repairs};
+  return {source:source.slice(0),nodes,skins,addedNodes:addedNodes.sort((a,b)=>a.index-b.index),children,jointIndices,channels,animationNames,repairs};
 }
 
 const legacyKeys=['__assetDoctorSourceAudit','__assetDoctorAuthoredMaterials','__assetDoctorCompareGrounded'];
@@ -148,20 +183,28 @@ export function patchRigGlb(packet:RigExportPacket):ArrayBuffer {
   const {document,binary}=parseGlb(packet.source);
   const originalLength=binary.byteLength,chunks:Uint8Array[]=[binary];let byteLength=originalLength;
   document.bufferViews??=[];document.accessors??=[];
-  const append=(values:Float32Array|Uint32Array|Uint16Array,type:string,count:number,oldAccessor?:number)=>{
+  const append=(values:Float32Array|Uint32Array|Uint16Array|Uint8Array,type:string,count:number,oldAccessor?:number)=>{
     const source=oldAccessor===undefined?{}:document.accessors[oldAccessor];
     const bytes=new Uint8Array(values.buffer,values.byteOffset,values.byteLength),view=document.bufferViews.length;
     const oldView=source.bufferView===undefined?undefined:document.bufferViews[source.bufferView];
     if(Object.keys(oldView?.extensions??{}).some(key=>key!=='EXT_meshopt_compression'))throw new Error('Modified buffer view extensions require a dedicated preservation rule.');
     const authorView={...(oldView && Object.hasOwn(oldView,'name')?{name:oldView.name}:{}),...(oldView && Object.hasOwn(oldView,'extras')?{extras:structuredClone(oldView.extras)}:{})};
     document.bufferViews.push({...authorView,buffer:0,byteOffset:byteLength,byteLength:bytes.length});chunks.push(bytes);byteLength+=bytes.length;
-    const definition={...structuredClone(source),bufferView:view,byteOffset:0,componentType:values instanceof Float32Array?5126:values instanceof Uint16Array?5123:5125,type,count};
+    const definition={...structuredClone(source),bufferView:view,byteOffset:0,componentType:values instanceof Float32Array?5126:values instanceof Uint8Array?5121:values instanceof Uint16Array?5123:5125,type,count};
     delete definition.sparse;delete definition.normalized;delete definition.min;delete definition.max;
     // Extension descriptors for the source accessor may depend on its original layout.
     if(definition.extensions && Object.keys(definition.extensions).length)throw new Error('Modified accessor extensions require a dedicated preservation rule.');
     if(type==='SCALAR' && values.length) {let min=Infinity,max=-Infinity;for(const value of values){min=Math.min(min,value);max=Math.max(max,value);}definition.min=[min];definition.max=[max];}
     document.accessors.push(definition);return document.accessors.length-1;
   };
+  for(const node of packet.addedNodes) {
+    if(node.index!==document.nodes.length)throw new Error('Added node identities must be contiguous.');
+    document.nodes.push({name:node.name,translation:node.rest.position,rotation:node.rest.quaternion,scale:node.rest.scale,...(node.tip?{extras:{assetDoctorRigTip:{version:1,point:node.tip}}}:{})});
+  }
+  for(const parent of packet.children) {
+    if(parent.children.length)document.nodes[parent.index].children=parent.children.slice();
+    else delete document.nodes[parent.index].children;
+  }
   for(const node of packet.nodes) {
     const definition=document.nodes[node.index];if(!definition)throw new Error('Missing source node.');
     if(node.changed) {delete definition.matrix;definition.translation=node.rest.position;definition.rotation=node.rest.quaternion;definition.scale=node.rest.scale;}
@@ -173,7 +216,11 @@ export function patchRigGlb(packet:RigExportPacket):ArrayBuffer {
     }
   }
   for(const skin of packet.skins) if(skin.changed) {
-    const definition=document.skins[skin.index];definition.inverseBindMatrices=append(new Float32Array(skin.inverses.flat()),'MAT4',skin.inverses.length,definition.inverseBindMatrices);
+    const definition=document.skins[skin.index];definition.joints=skin.joints.slice();definition.inverseBindMatrices=append(new Float32Array(skin.inverses.flat()),'MAT4',skin.inverses.length,definition.inverseBindMatrices);
+  }
+  for(const indices of packet.jointIndices) {
+    const primitive=document.meshes[indices.mesh].primitives[indices.primitive];
+    primitive.attributes.JOINTS_0=append(indices.values,'VEC4',indices.values.length/4,primitive.attributes.JOINTS_0);
   }
   for(const channel of packet.channels) if(channel.changed) {
     if(!channel.times.length || channel.times.some((time,index)=>!Number.isFinite(time)||time<0||(index>0&&time<=channel.times[index-1])) || channel.values.some(value=>!Number.isFinite(value)))throw new Error('Invalid serialized animation samples.');

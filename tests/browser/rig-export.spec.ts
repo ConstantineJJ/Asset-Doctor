@@ -1,3 +1,4 @@
+import {openJointDetails,closeJointDetails} from './rig-toolbar-probe';
 import {test,expect} from '@playwright/test';
 import {rigFixture} from '../rig-fixtures';
 import {metadataFixture} from './runtime-metadata-fixture';
@@ -15,7 +16,7 @@ for(const textured of [false,true])test(`Rig worker export and actual reimport p
  await page.mouse.click(...joint.screen as [number,number]);
  await expect.poll(async()=>(await rigViewerState(page)).selected).toBe(joint.uuid);
  const editedX=joint.position[0]+.25;
- await page.getByLabel('Joint position X',{exact:true}).fill(String(editedX));await page.getByRole('button',{name:'Apply Position',exact:true}).click();
+ await openJointDetails(page); await page.getByLabel('Joint position X',{exact:true}).fill(String(editedX));await page.getByRole('button',{name:'Apply Position',exact:true}).click(); await closeJointDetails(page);
  await page.getByLabel('Export clip duration').fill('8');await page.getByRole('button',{name:'Retime Selected Clip',exact:true}).click();
  await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();
  await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED',{timeout:30000});
@@ -41,7 +42,7 @@ test('Combined index Repair and rig export preserves raw non-unit source weights
  const offset=28+jsonLength+(view.byteOffset??0)+(accessor.byteOffset??0);
  for(let i=0;i<accessor.count*4;i++)source.writeFloatLE(source.readFloatLE(offset+i*4)*2,offset+i*4);
  await page.locator('header input[type=file]').setInputFiles({name:'combined.glb',mimeType:'model/gltf-binary',buffer:source});await expect(page.getByRole('button',{name:'Run safe queue',exact:true})).toBeEnabled();await page.getByRole('button',{name:'Run safe queue',exact:true}).click();await expect(page.getByRole('button',{name:'Build & Verify',exact:true})).toBeEnabled();
- await page.getByRole('button',{name:'Rig',exact:true}).click();await page.getByTestId('rig-mode-edit').click();const initial=await rigViewerState(page),joint=initial.bones[0];await page.mouse.click(...joint.screen as [number,number]);await page.getByLabel('Joint position X',{exact:true}).fill(String(joint.position[0]+.2));await page.getByRole('button',{name:'Apply Position',exact:true}).click();
+ await page.getByRole('button',{name:'Rig',exact:true}).click();await page.getByTestId('rig-mode-edit').click();const initial=await rigViewerState(page),joint=initial.bones[0];await page.mouse.click(...joint.screen as [number,number]);await openJointDetails(page); await page.getByLabel('Joint position X',{exact:true}).fill(String(joint.position[0]+.2));await page.getByRole('button',{name:'Apply Position',exact:true}).click(); await closeJointDetails(page);
  await page.getByRole('button',{name:'Verify Edited GLB',exact:true}).click();await expect(page.getByTestId('rig-export-status')).toContainText('VERIFIED');
  const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Save Edited GLB',exact:true}).click()]);const stream=await download.createReadStream(),chunks:Buffer[]=[];for await(const chunk of stream!)chunks.push(Buffer.from(chunk));const output=Buffer.concat(chunks),outputLength=output.readUInt32LE(12),exported=JSON.parse(output.subarray(20,20+outputLength).toString().trim());
  const binLength=source.readUInt32LE(20+jsonLength);expect(output.subarray(28+outputLength,28+outputLength+binLength)).toEqual(source.subarray(28+jsonLength,28+jsonLength+binLength));expect(exported.meshes[0].primitives[0].attributes.WEIGHTS_0).toBe(document.meshes[0].primitives[0].attributes.WEIGHTS_0);

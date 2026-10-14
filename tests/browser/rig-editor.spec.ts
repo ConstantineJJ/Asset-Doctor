@@ -1,3 +1,4 @@
+import {openJointDetails,closeJointDetails} from './rig-toolbar-probe';
 import {test,expect} from '@playwright/test';
 import {rigFixture} from '../rig-fixtures';
 import {rigViewerState} from './rig-runtime-probe';
@@ -12,12 +13,12 @@ test('Rig editor preserves authored rest across real gizmo drag, playback, previ
  const root=initial.bones.find(bone=>bone.name==='Root')!;
  await page.mouse.click(...root.screen as [number,number]);
  await expect.poll(async()=>(await rigViewerState(page)).selected).toBe(root.uuid);
- await page.getByLabel('Joint position X',{exact:true}).fill('1.4');
- await page.getByRole('button',{name:'Apply Position',exact:true}).click();
+ await openJointDetails(page); await page.getByLabel('Joint position X',{exact:true}).fill('1.4');
+ await page.getByRole('button',{name:'Apply Position',exact:true}).click(); await closeJointDetails(page);
  await expect.poll(async()=>(await rigViewerState(page)).bones.find(bone=>bone.name==='Root')!.position[0]).toBe(1.4);
  await page.getByTestId('rig-mode-pose').click();
- await page.getByLabel('Joint rotation Z',{exact:true}).fill('30');
- await page.getByRole('button',{name:'Preview Rotation',exact:true}).click();
+ await openJointDetails(page); await page.getByLabel('Joint rotation Z',{exact:true}).fill('30');
+ await page.getByRole('button',{name:'Preview Rotation',exact:true}).click(); await closeJointDetails(page);
  expect((await rigViewerState(page)).revision).toBe(1);
  await page.getByTestId('rig-mode-edit').click();
  expect((await rigViewerState(page)).bones.find(bone=>bone.name==='Root')!.quaternion).toEqual([0,0,0,1]);

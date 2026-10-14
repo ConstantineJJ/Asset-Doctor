@@ -142,6 +142,10 @@ export class RenderModeManager {
     for(const state of this.shading.values()) {const source=state.geometrySources.get(mesh);if(source)return source;}
     return mesh.geometry;
   }
+  /** Replace an authored stream while retaining the chosen presentation mode. */
+  public replaceAuthoredGeometry(root:THREE.Object3D,mesh:THREE.Mesh,geometry:THREE.BufferGeometry) {
+    this.disposeRootShading(root);mesh.geometry=geometry;this.applyMode(this.currentMode,root);
+  }
 
   private disposeAllShading() {
     for (const root of [...this.shading.keys()]) this.disposeRootShading(root);

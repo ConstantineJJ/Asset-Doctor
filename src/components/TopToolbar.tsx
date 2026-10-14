@@ -18,7 +18,7 @@ import {
   Zap,
   Languages,
 } from 'lucide-react';
-import type { LightingPreset, RenderMode, SurfaceType } from '../types';
+import type { LightingPreset, RenderMode } from '../types';
 import { useI18n } from '../i18n';
 import {version as appVersion} from '../../package.json';
 
@@ -33,8 +33,6 @@ interface TopToolbarProps {
   onSetRenderMode: (mode: RenderMode) => void;
   lightingPreset: LightingPreset;
   onSetLightingPreset: (preset: LightingPreset) => void;
-  surface: SurfaceType;
-  onSetSurface: (surface: SurfaceType) => void;
   isTreeCollapsed: boolean;
   onToggleTreeCollapse: () => void;
   autoRotate: boolean;
@@ -70,8 +68,6 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   onSetRenderMode,
   lightingPreset,
   onSetLightingPreset,
-  surface,
-  onSetSurface,
   isTreeCollapsed,
   onToggleTreeCollapse,
   autoRotate,
@@ -161,7 +157,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           <span className="font-bold tracking-tight text-gray-100 hidden xl:inline text-sm">
             Asset <span className="text-cyan-400 font-light">Doctor</span>
           </span>
-          <span data-testid="app-version" className="font-mono text-green-200 font-semibold" title={`Asset Doctor ${appVersion}`}>{appVersion}</span>
+          <span data-testid="app-version" className="font-mono text-blue-200 font-semibold" title={`Asset Doctor ${appVersion}`}>{appVersion}</span>
         </div>
 
         <button
@@ -176,7 +172,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 
         <button
           id="btn-export-file"
-          onClick={onExport}
+          data-tone="edit" onClick={onExport}
           disabled={!canExport || exportBusy}
           className="flex items-center gap-1.5 px-2 py-1.5 rounded bg-[#252830] hover:bg-[#2e323c] border border-[#373b46] text-gray-100 font-medium transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           title={canExport ? t('toolbar.exportTitle') : t('toolbar.exportDisabledTitle')}
@@ -191,7 +187,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             type="button"
             aria-haspopup="menu"
             aria-expanded={sampleMenuOpen}
-            onClick={() => setSampleMenuOpen((open) => !open)}
+            data-tone="other" onClick={() => setSampleMenuOpen((open) => !open)}
             className="flex items-center gap-1.5 px-2 py-1.5 rounded bg-[#1f2228] hover:bg-[#272a32] border border-[#323642] text-gray-300 font-medium transition cursor-pointer"
           >
             <Layers className="w-3.5 h-3.5 text-blue-400 shrink-0" />
@@ -220,7 +216,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 
         <button
           id="btn-topology-tests"
-          onClick={onOpenUnitTests}
+          data-tone="other" onClick={onOpenUnitTests}
           className="hidden 2xl:flex items-center gap-1.5 px-2 py-1.5 rounded bg-[#1f2228] hover:bg-[#272a32] border border-[#323642] text-emerald-400 hover:text-emerald-300 transition cursor-pointer"
           title={t('toolbar.topologyTestsTitle')}
         >
@@ -271,26 +267,6 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             <option value="top-light" className="bg-[#1e2127]">Top Spotlight</option>
             <option value="rim-light" className="bg-[#1e2127]">Rim Light Silhouette</option>
             <option value="dark-studio" className="bg-[#1e2127]">Dark Studio</option>
-          </select>
-        </div>
-
-        {/* Surface Selection */}
-        <div className="hidden lg:flex items-center gap-1 bg-[#1e2127] px-1.5 py-1 rounded border border-[#2d313a]">
-          <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-          <select
-            id="select-surface"
-            value={surface}
-            onChange={(e) => onSetSurface(e.target.value as SurfaceType)}
-            className="bg-transparent text-gray-200 text-[11px] focus:outline-none cursor-pointer font-medium max-w-36"
-            title={language === 'ru' ? 'Выбрать поверхность пола' : 'Choose ground surface'}
-          >
-            <option value="grid" className="bg-[#1e2127]">{language === 'ru' ? 'Сетка (Студия)' : 'Studio Grid'}</option>
-            <option value="grass" className="bg-[#1e2127]">{language === 'ru' ? 'Газон (Трава)' : 'Lawn / Grass'}</option>
-            <option value="road" className="bg-[#1e2127]">{language === 'ru' ? 'Дорога / тротуар' : 'Road & Sidewalk'}</option>
-            <option value="sand" className="bg-[#1e2127]">{language === 'ru' ? 'Песок' : 'Desert Sand'}</option>
-            <option value="tile" className="bg-[#1e2127]">{language === 'ru' ? 'Керамогранит' : 'Porcelain Tile'}</option>
-            <option value="wood" className="bg-[#1e2127]">{language === 'ru' ? 'Деревянный пол' : 'Wooden Floor'}</option>
-            <option value="none" className="bg-[#1e2127]">{language === 'ru' ? 'Без поверхности' : 'No Surface'}</option>
           </select>
         </div>
 

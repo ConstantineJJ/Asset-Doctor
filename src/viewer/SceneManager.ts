@@ -21,6 +21,7 @@ export interface SceneManagerCallbacks {
   onRigChanged?: () => void;
   onRigError?: (message:string) => void;
   onRigDrag?: (active:boolean) => void;
+  onRigContextMenu?: (joint:{uuid:string;x:number;y:number})=>void;
 }
 
 export class SceneManager {
@@ -298,6 +299,19 @@ export class SceneManager {
     });
 
     // Viewport click selection & light bulb drag
+    this.renderer.domElement.addEventListener('contextmenu',event=>{
+      if(this.pickBoneAtPointer(event as PointerEvent,this.renderer.domElement.getBoundingClientRect()))event.preventDefault();
+    });
+    this.renderer.domElement.addEventListener('pointerdown',event=>{
+      if(event.button!==2||this.rigInteractionBlocked||this.rigGizmo.controls.dragging)return;
+      const joint=this.pickBoneAtPointer(event,this.renderer.domElement.getBoundingClientRect());if(!joint)return;
+      const up=(end:PointerEvent)=>{
+        window.removeEventListener('pointerup',up);
+        if(end.button===2&&Math.hypot(end.clientX-event.clientX,end.clientY-event.clientY)<4&&!this.rigInteractionBlocked&&this.currentAssetRoot?.getObjectByProperty('uuid',joint.uuid)) {
+          this.selectObject(joint.uuid);this.callbacks.onRigContextMenu?.({uuid:joint.uuid,x:end.clientX,y:end.clientY});
+        }
+      };window.addEventListener('pointerup',up);
+    },true);
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       // A visible different joint wins over an overlapping handle. Capture runs
@@ -508,7 +522,7 @@ export class SceneManager {
     this.clearIssueLocalization();
 
     this.currentAssetRoot = assetRoot;
-    this.rigSession=new RigEditSession(assetRoot,clips);
+    this.rigSession=new RigEditSession(assetRoot,clips,mesh=>this.renderModeManager.authoredGeometry(mesh),(mesh,geometry)=>this.renderModeManager.replaceAuthoredGeometry(assetRoot,mesh,geometry));
     this.presentationWrapper = createPresentationWrapper(assetRoot);
     this.scene.add(this.presentationWrapper);
 
@@ -669,26 +683,7 @@ export class SceneManager {
     }
 
     // 4. Skeleton Helper
-    this.skeletonHelper = new THREE.SkeletonHelper(assetRoot);
-    this.skeletonHelper.name = '__ascope_internal_skeleton';
-    this.skeletonHelper.visible = this.isSkeletonVisible;
-    this.skeletonHelper.frustumCulled = false;
-    this.applySkeletonXrayMaterial();
-    this.scene.add(this.skeletonHelper);
-    assetRoot.traverse(node => { if ((node as THREE.Bone).isBone) this.inspectedBones.push(node as THREE.Bone); });
-    if (this.inspectedBones.length) {
-      this.skeletonJoints = new THREE.InstancedMesh(
-        new THREE.SphereGeometry(1, 10, 8),
-        new THREE.MeshBasicMaterial({color:0xa78bfa,depthTest:false,depthWrite:false}),
-        this.inspectedBones.length
-      );
-      this.skeletonJoints.name = '__ascope_internal_skeleton_joints';
-      this.skeletonJoints.visible = this.isSkeletonVisible;
-      this.skeletonJoints.frustumCulled = false;
-      this.skeletonJoints.renderOrder = 999;
-      this.scene.add(this.skeletonJoints);
-      this.updateSkeletonJoints();
-    }
+    this.refreshRigStructure();
 
     // 5. Animations setup
     this.animationClips = this.rigSession.clips;
@@ -727,6 +722,37 @@ export class SceneManager {
     };
 
     console.log('[AssetDoctor Whole-Model Inspection]', this.lastWholeModelInspection);
+  }
+
+  public refreshRigStructure() {
+    const assetRoot=this.currentAssetRoot;if(!assetRoot)return;
+    const bones:THREE.Bone[]=[];assetRoot.traverse(node=>{if(node instanceof THREE.Bone)bones.push(node);});
+    if(this.skeletonHelper&&bones.length===this.inspectedBones.length&&bones.every((bone,i)=>bone===this.inspectedBones[i]))return;
+    if(this.skeletonHelper){this.scene.remove(this.skeletonHelper);this.skeletonHelper.dispose();}
+    if(this.skeletonJoints){this.scene.remove(this.skeletonJoints);this.skeletonJoints.geometry.dispose();(this.skeletonJoints.material as THREE.Material).dispose();this.skeletonJoints=null;}
+    this.inspectedBones=[];
+    this.skeletonHelper=new THREE.SkeletonHelper(assetRoot);
+    this.skeletonHelper.name = '__ascope_internal_skeleton';
+    this.skeletonHelper.visible = this.isSkeletonVisible;
+    this.skeletonHelper.frustumCulled = false;
+    this.applySkeletonXrayMaterial();
+    this.scene.add(this.skeletonHelper);
+    assetRoot.traverse(node => { if ((node as THREE.Bone).isBone) this.inspectedBones.push(node as THREE.Bone); });
+    if (this.inspectedBones.length) {
+      this.skeletonJoints = new THREE.InstancedMesh(
+        new THREE.SphereGeometry(1, 10, 8),
+        new THREE.MeshBasicMaterial({color:0xa78bfa,depthTest:false,depthWrite:false}),
+        this.inspectedBones.length
+      );
+      this.skeletonJoints.name = '__ascope_internal_skeleton_joints';
+      this.skeletonJoints.visible = this.isSkeletonVisible;
+      this.skeletonJoints.frustumCulled = false;
+      this.skeletonJoints.renderOrder = 999;
+      this.scene.add(this.skeletonJoints);
+      this.updateSkeletonJoints();
+    }
+
+    if(this.selectedMeshUuid&&!assetRoot.getObjectByProperty('uuid',this.selectedMeshUuid))this.selectObject(null);
   }
 
   private createAnimationMixer(root:THREE.Group) {
@@ -1800,7 +1826,7 @@ export class SceneManager {
 
   public disposeCurrentAsset() {
     this.rigGizmo?.configure(null,null,this.rigSettings);
-    this.rigSession=null;
+    this.rigSession?.dispose();this.rigSession=null;
     this.clearIssueLocalization();
     this.issueReturnView = null;
     if (!this.currentAssetRoot) return;

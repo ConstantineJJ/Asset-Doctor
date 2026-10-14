@@ -19,36 +19,45 @@ canvas {
   display: block;
 }
 
-/* Shared desktop controls: readable text and a consistent action palette. */
+/* Blue: information/view. Green: authored edits. Red: cancel/warning. Purple: utilities. */
 .asset-doctor-ui {
-  --control-bg: #163e2b;
-  --control-border: #56ae7d;
-  --control-text: #edfff4;
-  --control-active: #83edac;
+  --control-bg: #16344a;
+  --control-border: #589fdf;
+  --control-text: #eff6ff;
+  --control-hover: #214f70;
+  --control-active: #8ecbff;
+  --control-active-hover: #aedaff;
+  --control-active-text: #0a263b;
   --danger-bg: #61252e;
   --danger-border: #ef8795;
   --ui-muted: #bfc8d2;
 }
-.asset-doctor-ui button {
-  background-color: var(--control-bg);
-  border: 1px solid var(--control-border);
-  color: var(--control-text);
-  cursor: pointer;
-  transition: background-color 120ms, border-color 120ms;
+.asset-doctor-ui button[data-tone="edit"] {
+  --control-bg: #163e2b; --control-border: #56ae7d; --control-text: #edfff4;
+  --control-hover: #225b3e; --control-active: #83edac; --control-active-hover: #a0f4be; --control-active-text: #10281b;
 }
-.asset-doctor-ui button:hover:not(:disabled) { background-color: #225b3e; border-color: #a6f4c4; }
-.asset-doctor-ui button[aria-pressed="true"],
-.asset-doctor-ui button[aria-selected="true"] { background-color: var(--control-active); color: #10281b; border-color: #bbf9d1; }
-.asset-doctor-ui button:is([aria-pressed="true"],[aria-selected="true"]):hover:not(:disabled) { background-color: #a0f4be; color: #10281b; }
-.asset-doctor-ui button[data-tone="danger"] { background-color: var(--danger-bg); border-color: var(--danger-border); color: #fff0f2; }
-.asset-doctor-ui button[data-tone="danger"]:hover:not(:disabled) { background-color: #83343f; }
+.asset-doctor-ui button[data-tone="danger"] {
+  --control-bg: #61252e; --control-border: #ef8795; --control-text: #fff0f2;
+  --control-hover: #83343f; --control-active: #ffbac4; --control-active-hover: #ffd0d7; --control-active-text: #3d1018;
+}
+.asset-doctor-ui button[data-tone="other"] {
+  --control-bg: #39265a; --control-border: #b398ed; --control-text: #f5efff;
+  --control-hover: #53377d; --control-active: #d1baff; --control-active-hover: #e0cfff; --control-active-text: #25123f;
+}
+.asset-doctor-ui button {
+  background-color: var(--control-bg); border: 1px solid var(--control-border); color: var(--control-text);
+  cursor: pointer; transition: background-color 120ms, border-color 120ms;
+}
+.asset-doctor-ui button:hover:not(:disabled) { background-color: var(--control-hover); }
+.asset-doctor-ui button:is([aria-pressed="true"],[aria-selected="true"]) { background-color: var(--control-active); color: var(--control-active-text); }
+.asset-doctor-ui button:is([aria-pressed="true"],[aria-selected="true"]):hover:not(:disabled) { background-color: var(--control-active-hover); color: var(--control-active-text); }
 .asset-doctor-ui [role="button"][data-tone="danger"] { background-color: var(--danger-bg); border: 1px solid var(--danger-border); color: #fff0f2; }
 .asset-doctor-ui button:disabled {
   background-color: #30363c; border-color: #65717e; color: #adb8c4;
   opacity: 1; cursor: not-allowed;
 }
 .asset-doctor-ui fieldset:disabled { opacity: 1; }
-.asset-doctor-ui :is(button,input,select,textarea):focus-visible { outline: 2px solid #b0f8cb; outline-offset: 2px; }
+.asset-doctor-ui :is(button,input,select,textarea):focus-visible { outline: 2px solid #a6d8ff; outline-offset: 2px; }
 .asset-doctor-ui :is(input:not([type="range"]):not([type="checkbox"]):not([type="file"]),select,textarea) {
   background-color: #151c22; border: 1px solid #788592; color: #f1f5f9;
 }
@@ -56,5 +65,7 @@ canvas {
 .asset-doctor-ui :is(.text-gray-400,.text-gray-500) { color: var(--ui-muted); }
 .asset-doctor-ui [role="alert"] { color: #ffb7c1; }
 .asset-doctor-ui button svg { color: inherit; }
-.asset-doctor-ui [data-testid="rig-editor"] label { display: block; }
+.asset-doctor-ui :is([data-testid="rig-editor"],[data-testid="rig-toolbar"]) label { display: block; }
 .asset-doctor-ui :is(input,select,textarea):disabled { color: #adb8c4; cursor: not-allowed; }
+
+.asset-doctor-ui :is(.text-amber-300,.text-amber-200) { color: #ffb7c1; }

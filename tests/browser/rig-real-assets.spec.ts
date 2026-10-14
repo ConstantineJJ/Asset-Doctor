@@ -1,3 +1,4 @@
+import {openJointDetails,closeJointDetails} from './rig-toolbar-probe';
 import {test,expect} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 import {rigViewerState} from './rig-runtime-probe';
@@ -12,8 +13,8 @@ for(const name of ['RiggedSimple','Fox'])test(`Khronos ${name}: joint orientatio
  await expect(page.getByText('Animation Clips:',{exact:true}).locator('..')).toContainText(String(initial.durations!.length));
  const hierarchy=page.locator('main > aside').first();
  await hierarchy.getByPlaceholder('Search hierarchy...').fill(joint.name);await hierarchy.getByTitle(joint.name,{exact:true}).click();await hierarchy.getByPlaceholder('Search hierarchy...').fill('');
- await page.getByLabel('Joint position X',{exact:true}).fill(String(joint.position[0]+.05));await page.getByRole('button',{name:'Apply Position',exact:true}).click();
- await page.getByLabel('Joint rotation Z',{exact:true}).fill('15');await page.getByRole('button',{name:'Apply Rotation',exact:true}).click();
+ await openJointDetails(page); await page.getByLabel('Joint position X',{exact:true}).fill(String(joint.position[0]+.05));await page.getByRole('button',{name:'Apply Position',exact:true}).click(); await closeJointDetails(page);
+ await openJointDetails(page); await page.getByLabel('Joint rotation Z',{exact:true}).fill('15');await page.getByRole('button',{name:'Apply Rotation',exact:true}).click(); await closeJointDetails(page);
  const rest=await rigViewerState(page);
  await page.getByLabel('Export clip duration').fill(String(initial.durations![0]*2));await page.getByRole('button',{name:'Retime Selected Clip',exact:true}).click();
  await page.getByTestId('rig-mode-pose').click();await page.getByTitle('Play',{exact:true}).click();await page.getByTitle('Stop & Reset',{exact:true}).click();
