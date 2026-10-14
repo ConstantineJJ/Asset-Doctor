@@ -1,7 +1,7 @@
 import React,{useEffect,useRef} from 'react';
 import {useI18n} from '../i18n';
 
-export function RigJointMenu({joint,reason,busy,onAdd,onDelete,onClose}:{joint:{uuid:string;x:number;y:number;name:string};reason:string|null;busy:boolean;onAdd:()=>void;onDelete:()=>void;onClose:()=>void}) {
+export function RigJointMenu({joint,reason,busy,onAdd,onDelete,onDeleteChain,onClose}:{joint:{uuid:string;x:number;y:number;name:string};reason:string|null;busy:boolean;onAdd:()=>void;onDelete:()=>void;onDeleteChain:()=>void;onClose:()=>void}) {
   const ref=useRef<HTMLDivElement>(null),{language}=useI18n(),label=(en:string,ru:string)=>language==='ru'?ru:en;
   useEffect(()=>{
     ref.current?.querySelector<HTMLButtonElement>('button')?.focus();
@@ -20,6 +20,7 @@ export function RigJointMenu({joint,reason,busy,onAdd,onDelete,onClose}:{joint:{
     <p className="text-blue-200 break-words">{joint.name||label('Joint','Сустав')}</p>
     <button role="menuitem" data-tone="edit" disabled={busy} className="w-full rounded p-2 text-left" onClick={onAdd}>{label('Add child joint','Добавить дочерний сустав')}</button>
     <button role="menuitem" data-tone="danger" disabled={busy||Boolean(reason)} className="w-full rounded p-2 text-left" onClick={onDelete}>{label('Delete joint','Удалить сустав')}</button>
+    <button role="menuitem" data-tone="danger" disabled={busy||Boolean(reason)} className="w-full rounded p-2 text-left" onClick={onDeleteChain}>{label('Delete chain','Удалить цепочку')}</button>
     {reason&&<p data-testid="joint-menu-reason" className="text-red-200">{reason}</p>}
     <p className="text-blue-200">{label('New joints have no skin weights. Drag with RMB still pans the camera.','Новый сустав создаётся без весов. Перетаскивание ПКМ по-прежнему перемещает камеру.')}</p>
   </div>;

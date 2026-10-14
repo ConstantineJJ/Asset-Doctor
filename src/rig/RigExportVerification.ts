@@ -3,16 +3,17 @@ import { GLBLoaderService } from '../loaders/GLBLoaderService';
 import { getSourceAssociation } from '../loaders/AssetRuntimeMetadata';
 import { disposeModelResources } from '../loaders/ModelResources';
 import { isGltfCubic } from '../animation/ClipEdits';
-import { mapChannels,parseGlb,cleanLegacyExtras,sourceNodeIndex,type RigExportPacket } from './RigGlbPatch';
+import { addedNodeDefinition,mapChannels,parseGlb,cleanLegacyExtras,sourceNodeIndex,type RigExportPacket } from './RigGlbPatch';
 
 export interface RigVerification {status:'VERIFIED'|'REGRESSION';reasons:string[];meshCount:number;clipCount:number;sampledVertices:number;phases:number[];sourcePreserved:boolean}
 export interface RigIdentity {uuid:string;node?:number;mesh?:number;primitive?:number;ancestor?:number}
 export function rigIdentities(root:THREE.Group,created=new Map<string,number>()):RigIdentity[] {
   const identities:RigIdentity[]=[];
+  const ancestor=(node:THREE.Object3D)=>{for(let parent:THREE.Object3D|null=node;parent;parent=parent.parent){const index=created.get(parent.uuid)??getSourceAssociation(parent)?.nodes;if(index!==undefined)return index;}return undefined;};
   root.traverse(node=>{
     const association=getSourceAssociation(node);
     if(created.has(node.uuid))identities.push({uuid:node.uuid,node:created.get(node.uuid),ancestor:created.get(node.uuid)});
-    else if(association)identities.push({uuid:node.uuid,node:association.nodes,mesh:association.meshes,primitive:association.primitives,ancestor:sourceNodeIndex(node)});
+    else if(association)identities.push({uuid:node.uuid,node:association.nodes,mesh:association.meshes,primitive:association.primitives,ancestor:ancestor(node)});
   });return identities;
 }
 function key(identity:RigIdentity) {return identity.node!==undefined?`node:${identity.node}`:identity.mesh!==undefined?`node:${identity.ancestor}/mesh:${identity.mesh}/primitive:${identity.primitive}`:null;}
@@ -30,7 +31,7 @@ function restoreField(target:any,source:any,field:string) {if(Object.hasOwn(sour
 export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayBuffer) {
   const source=parseGlb(packet.source),candidate=parseGlb(output),expected=structuredClone(source.document),actual=structuredClone(candidate.document);
   close(candidate.binary.subarray(0,source.binary.length),source.binary,'Original GLB binary bytes',0);
-  const verifyStream=(index:number,oldIndex:number|undefined,values:Float32Array|Uint32Array|Uint16Array|Uint8Array,type:string,count:number)=>{
+  const verifyStream=(index:number,oldIndex:number|undefined,values:Float32Array|Uint32Array|Uint16Array|Uint8Array,type:string,count:number,bounds=false)=>{
     const definition=candidate.document.accessors[index],old=oldIndex===undefined?{}:source.document.accessors[oldIndex],view=candidate.document.bufferViews[definition?.bufferView];
     const componentType=values instanceof Float32Array?5126:values instanceof Uint8Array?5121:values instanceof Uint16Array?5123:5125;
     if(!definition||!view||definition.componentType!==componentType||definition.type!==type||definition.count!==count||definition.normalized||definition.sparse||(definition.byteOffset??0)!==0||view.buffer!==0||view.byteStride||view.extensions||(view.byteOffset??0)<source.binary.length||view.byteLength!==values.byteLength)throw new Error('Serialized replacement accessor descriptor differs.');
@@ -52,11 +53,15 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
     if(type==='SCALAR') {
       let min=Infinity,max=-Infinity;for(const value of values){min=Math.min(min,value);max=Math.max(max,value);}
       if(canonical(definition.min)!==canonical([min])||canonical(definition.max)!==canonical([max]))throw new Error('Replacement accessor bounds differ.');
+    } else if(bounds) {
+      const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+      for(let i=0;i<values.length;i++){const c=i%3;min[c]=Math.min(min[c],values[i]);max[c]=Math.max(max[c],values[i]);}
+      if(type!=='VEC3'||canonical(definition.min)!==canonical(min)||canonical(definition.max)!==canonical(max))throw new Error('Baked position bounds differ.');
     } else if(Object.hasOwn(definition,'min')||Object.hasOwn(definition,'max'))throw new Error('Unexpected replacement accessor bounds.');
   };
   if(actual.nodes.length!==expected.nodes.length+packet.addedNodes.length)throw new Error('Added node count differs.');
   for(const node of packet.addedNodes) {
-    const definition={name:node.name,translation:node.rest.position,rotation:node.rest.quaternion,scale:node.rest.scale,...(node.tip?{extras:{assetDoctorRigTip:{version:1,point:node.tip}}}:{})};
+    const definition=addedNodeDefinition(node,expected);
     const child=packet.children.find(parent=>parent.index===node.index);
     if(child?.children.length)Object.assign(definition,{children:child.children});
     if(canonical(actual.nodes[node.index])!==canonical(definition))throw new Error('Added joint definition differs.');
@@ -66,6 +71,10 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
     if(parent.children.length?canonical(definition?.children)!==canonical(parent.children):Object.hasOwn(definition,'children'))throw new Error('Serialized joint hierarchy differs.');
     if(parent.index<expected.nodes.length)restoreField(actual.nodes[parent.index],expected.nodes[parent.index],'children');
   }
+  if(packet.sceneRoots) {
+    if(canonical(actual.scenes[0].nodes??[])!==canonical(packet.sceneRoots))throw new Error('Serialized scene root identities differ.');
+    restoreField(actual.scenes[0],expected.scenes[0],'nodes');
+  }
   actual.nodes=actual.nodes.slice(0,expected.nodes.length);
   for(const indices of packet.jointIndices) {
     const before=expected.meshes[indices.mesh].primitives[indices.primitive],after=actual.meshes[indices.mesh].primitives[indices.primitive];
@@ -73,12 +82,54 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
     restoreField(after.attributes,before.attributes,'JOINTS_0');
   }
   for(const skin of packet.skins)if(skin.changed)verifyStream(candidate.document.skins[skin.index].inverseBindMatrices,source.document.skins[skin.index].inverseBindMatrices,new Float32Array(skin.inverses.flat()),'MAT4',skin.inverses.length);
-  for(const channel of packet.channels)if(channel.changed) {
-    const sourceAnimation=source.document.animations[channel.animation],animation=candidate.document.animations[channel.animation];
-    const old=sourceAnimation.samplers[sourceAnimation.channels[channel.channel].sampler],next=animation.samplers[animation.channels[channel.channel].sampler];
-    verifyStream(next.input,old.input,channel.times,'SCALAR',channel.times.length);
-    const type=source.document.accessors[old.output].type,size=type==='SCALAR'?1:type==='VEC3'?3:4;
-    verifyStream(next.output,old.output,channel.values,type,channel.values.length/size);
+  const originalAnimations=source.document.animations??[],retained=new Set<string>(),removed=new Set<string>();
+  for(const entry of packet.removedChannels) {
+    const key=`${entry.animation}:${entry.channel}`;
+    if(!originalAnimations[entry.animation]?.channels?.[entry.channel]||removed.has(key))throw new Error('Removed source channel identities differ.');removed.add(key);
+  }
+  if(canonical(packet.animationSources)!==canonical([...new Set(packet.animationSources)].sort((a,b)=>a-b))||(actual.animations?.length??0)!==packet.animationSources.length)throw new Error('Source animation subset differs.');
+  for(const [index,sourceIndex] of packet.animationSources.entries()) {
+    const before=originalAnimations[sourceIndex],animation=actual.animations[index];
+    if(!before||!animation)throw new Error('Missing retained source animation.');
+    const channels=packet.channels.filter(channel=>channel.animation===index);
+    if(animation.channels.length!==channels.length||!channels.length)throw new Error('Retained animation channel count differs.');
+    for(const [channelIndex,channel] of channels.entries()) {
+      const key=`${channel.sourceAnimation}:${channel.sourceChannel}`;
+      if(channel.channel!==channelIndex||channel.sourceAnimation!==sourceIndex||retained.has(key)||removed.has(key)||!before.channels[channel.sourceChannel])throw new Error('Retained source channel mapping differs.');retained.add(key);
+      const definition=animation.channels[channelIndex],oldDefinition=before.channels[channel.sourceChannel];
+      if(channel.changed) {
+        const old=before.samplers[oldDefinition.sampler],next=animation.samplers[definition.sampler];
+        if(!next||definition.sampler<before.samplers.length||next.interpolation!==channel.interpolation)throw new Error('Replacement animation sampler differs.');
+        verifyStream(next.input,old.input,channel.times,'SCALAR',channel.times.length);
+        const type=source.document.accessors[old.output].type,size=type==='SCALAR'?1:type==='VEC3'?3:4;
+        verifyStream(next.output,old.output,channel.values,type,channel.values.length/size);
+        const metadata=structuredClone(next);for(const field of ['input','output','interpolation'])restoreField(metadata,old,field);
+        if(canonical(metadata)!==canonical(old))throw new Error('Animation sampler author metadata differs.');
+        definition.sampler=oldDefinition.sampler;
+      }
+      if(canonical(definition)!==canonical(oldDefinition))throw new Error('Retained animation channel author data differs.');
+    }
+    const renamed=packet.animationNames.find(name=>name.index===index);
+    if(renamed?.changed) {
+      if(animation.name!==renamed.name)throw new Error('Animation name differs.');restoreField(animation,before,'name');
+    }
+    animation.channels=structuredClone(before.channels);animation.samplers=animation.samplers.slice(0,before.samplers.length);
+    if(canonical(animation)!==canonical(before))throw new Error('Retained animation author data differs.');
+  }
+  for(const [animation,definition] of originalAnimations.entries())for(let channel=0;channel<definition.channels.length;channel++)if(!retained.has(`${animation}:${channel}`)&&!removed.has(`${animation}:${channel}`))throw new Error('Source animation channel was silently lost.');
+  if(Object.hasOwn(expected,'animations'))actual.animations=structuredClone(expected.animations);else delete actual.animations;
+  for(const bake of packet.staticMeshes) {
+    if(Object.hasOwn(candidate.document.nodes[bake.node],'skin'))throw new Error('Baked mesh still has a skin.');
+    restoreField(actual.nodes[bake.node],expected.nodes[bake.node],'skin');
+    const before=expected.meshes[bake.mesh].primitives[bake.primitive],after=actual.meshes[bake.mesh].primitives[bake.primitive],candidatePrimitive=candidate.document.meshes[bake.mesh].primitives[bake.primitive];
+    if(Object.keys(candidatePrimitive.attributes).some(semantic=>/^(JOINTS|WEIGHTS)_\d+$/.test(semantic)))throw new Error('Baked mesh retains joint attributes.');
+    for(const semantic of Object.keys(before.attributes))if(/^(JOINTS|WEIGHTS)_\d+$/.test(semantic))restoreField(after.attributes,before.attributes,semantic);
+    for(const [semantic,stream] of Object.entries(bake.attributes)) {
+      verifyStream(candidatePrimitive.attributes[semantic],before.attributes[semantic],stream.values,`VEC${stream.size}`,stream.values.length/stream.size,semantic==='POSITION');restoreField(after.attributes,before.attributes,semantic);
+    }
+    for(const [semantic,targets] of Object.entries(bake.morphs))targets.forEach((stream,index)=>{
+      verifyStream(candidatePrimitive.targets?.[index]?.[semantic],before.targets?.[index]?.[semantic],stream.values,`VEC${stream.size}`,stream.values.length/stream.size,semantic==='POSITION');restoreField(after.targets[index],before.targets[index],semantic);
+    });
   }
   for(const repair of packet.repairs) {
     const before=source.document.meshes[repair.mesh].primitives[repair.primitive],after=candidate.document.meshes[repair.mesh].primitives[repair.primitive];
@@ -105,13 +156,12 @@ export function verifyRigSourcePreservation(packet:RigExportPacket,output:ArrayB
     if(canonical(actual.skins[skin.index].joints)!==canonical(skin.joints))throw new Error('Serialized skin joint order differs.');
     restoreField(actual.skins[skin.index],expected.skins[skin.index],'inverseBindMatrices');
     restoreField(actual.skins[skin.index],expected.skins[skin.index],'joints');
+    if(skin.anchor!==undefined) {
+      const anchor=candidate.document.skins[skin.index].skeleton;
+      if(skin.anchor===null?Object.hasOwn(candidate.document.skins[skin.index],'skeleton'):anchor!==skin.anchor)throw new Error('Serialized skin skeleton anchor differs.');
+      restoreField(actual.skins[skin.index],expected.skins[skin.index],'skeleton');
+    }
   }
-  for(const channel of packet.channels)if(channel.changed)actual.animations[channel.animation].channels[channel.channel].sampler=expected.animations[channel.animation].channels[channel.channel].sampler;
-  for(const animation of packet.animationNames)if(animation.changed) {
-    if(actual.animations[animation.index].name!==animation.name)throw new Error('Animation name differs.');
-    restoreField(actual.animations[animation.index],expected.animations[animation.index],'name');
-  }
-  for(let i=0;i<(expected.animations?.length??0);i++)actual.animations[i].samplers=actual.animations[i].samplers.slice(0,expected.animations[i].samplers.length);
   for(const repair of packet.repairs) {
     const definition=actual.meshes[repair.mesh].primitives[repair.primitive],before=expected.meshes[repair.mesh].primitives[repair.primitive];
     if(repair.index)restoreField(definition,before,'indices');

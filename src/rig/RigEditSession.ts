@@ -2,12 +2,18 @@ import * as THREE from 'three';
 import { cloneClips, rebaseClips, retimeClip } from '../animation/ClipEdits';
 import { documentMatrix } from '../viewer/AssetPresentation';
 import { getSourceAssociation, getSourceDocument, getSourceAudit } from '../loaders/AssetRuntimeMetadata';
+import {copySourceAssociation} from '../loaders/AssetRuntimeMetadata';
+import {getAuthoredMaterialSet,captureAuthoredMaterials} from '../viewer/AuthoredMaterialState';
+import {removalBones,removalSlots,remapInfluences,bakeRestSkin,holdClipDuration,type RemovalScope,type RemovalSummary} from './RigRemoval';
 
 export type RigMode='inspect'|'edit'|'pose';
 export type ChildPolicy='follow'|'hold';
 export interface JointChange { position?:number[]; quaternion?:number[] }
 export interface NodeRest { position:number[]; quaternion:number[]; scale:number[] }
 export interface RigSnapshot {
+  objects:Map<string,THREE.Object3D>;
+  clipSources:number[];
+  removedTargets:Set<number>;
   nodes:Map<string,NodeRest>;
   children:Map<string,string[]>;
   joints:Map<THREE.Skeleton,string[]>;
@@ -35,6 +41,8 @@ export class RigEditSession {
   private bones=new Map<string,THREE.Bone>();
   private skeletons=new Set<THREE.Skeleton>();
   private created=new Set<string>();
+  private variants=new Set<THREE.Object3D>();
+  private frameSources=new Map<string,number>();
   private ownedGeometries=new Set<THREE.BufferGeometry>();
   private appliedGeometryEdits=new Map<string,{before:THREE.BufferGeometry;geometry:THREE.BufferGeometry}>();
   private authored:RigSnapshot;
@@ -51,6 +59,7 @@ export class RigEditSession {
     this.root=root;
     root.traverse(node=>{
       this.objects.set(node.uuid,node);
+      this.variants.add(node);
       if(node instanceof THREE.Bone) this.bones.set(node.uuid,node);
       if(node instanceof THREE.SkinnedMesh) this.skeletons.add(node.skeleton);
     });
@@ -63,7 +72,7 @@ export class RigEditSession {
     this.baseline=this.authored;
   }
   get clips() { return this.authored.clips; }
-  get hasSkeleton() { return this.skeletons.size>0; }
+  get hasSkeleton() { return [...this.authored.objects.values()].some(node=>node instanceof THREE.Bone); }
   get isGestureActive() {return this.gesture!==null;}
   get canUndo() { return this.past.length>0; }
   get canRedo() { return this.future.length>0; }
@@ -75,23 +84,25 @@ export class RigEditSession {
   /** Export identities are compiled separately from immutable importer associations. */
   exportNodeIndices():Map<string,number> {
     let next=getSourceDocument(this.root)?.nodes?.length??0;
-    return new Map([...this.created].filter(id=>this.authored.nodes.has(id)).map(id=>[id,next++]));
+    return new Map([...this.created].filter(id=>this.authored.nodes.has(id)&&this.authored.objects.get(id)!==this.baseline.objects.get(id)).map(id=>[id,next++]));
   }
   isCreatedJoint(uuid:string) {return this.created.has(uuid);}
   get hasJointIndexEdits() {return this.authored.geometryEdits.size>0;}
-  sourceNodeIndexFor(uuid:string) {const node=this.objects.get(uuid);return node&&getSourceAssociation(node)?.nodes;}
+  sourceNodeIndexFor(uuid:string) {const node=this.baseline.objects.get(uuid)??this.objects.get(uuid);return node&&getSourceAssociation(node)?.nodes;}
+  frameSourceFor(uuid:string) {return this.frameSources.get(uuid);}
+  originalObject(uuidOrName:string) {return [...this.baseline.objects.values()].find(node=>node.uuid===uuidOrName||node.name===uuidOrName);}
 
   private signature(snapshot:RigSnapshot) {
     let signature=this.signatures.get(snapshot);
     if(signature===undefined) {
-      signature=JSON.stringify([[...snapshot.nodes],[...snapshot.children],[...snapshot.joints].map(([skin,joints])=>[skin.uuid,joints]),[...snapshot.geometryEdits].map(([id,edit])=>[id,edit.geometry.uuid]),[...snapshot.tips],snapshot.clips.map(clip=>[clip.name,clip.duration,clip.tracks.map(track=>[Array.from(track.times),Array.from(track.values)])])]);
+      signature=JSON.stringify([[...snapshot.objects].map(([id,node])=>[id,node.type]),snapshot.clipSources,[...snapshot.removedTargets],[...snapshot.nodes],[...snapshot.children],[...snapshot.joints].map(([skin,joints])=>[skin.uuid,joints]),[...snapshot.geometryEdits].map(([id,edit])=>[id,edit.geometry.uuid]),[...snapshot.tips],snapshot.clips.map(clip=>[clip.name,clip.duration,clip.tracks.map(track=>[Array.from(track.times),Array.from(track.values)])])]);
       this.signatures.set(snapshot,signature);
     }
     return signature;
   }
   private capture(clips:THREE.AnimationClip[],tips:Map<string,number[]>):RigSnapshot {
     const active:THREE.Object3D[]=[];this.root.traverse(node=>{if(this.objects.has(node.uuid))active.push(node);});
-    return {nodes:new Map(active.map(node=>[node.uuid,{position:node.position.toArray(),quaternion:node.quaternion.toArray(),scale:node.scale.toArray()}])),
+    return {objects:new Map(active.map(node=>[node.uuid,node])),clipSources:this.authored?.clipSources.slice()??clips.map((_,i)=>i),removedTargets:new Set(this.authored?.removedTargets??[]),nodes:new Map(active.map(node=>[node.uuid,{position:node.position.toArray(),quaternion:node.quaternion.toArray(),scale:node.scale.toArray()}])),
       children:new Map(active.map(node=>[node.uuid,node.children.filter(child=>this.objects.has(child.uuid)).map(child=>child.uuid)])),
       joints:new Map([...this.skeletons].map(skin=>[skin,skin.bones.map(bone=>bone.uuid)])),
       geometries:new Map(active.filter((node):node is THREE.Mesh=>node instanceof THREE.Mesh).map(mesh=>[mesh.uuid,this.geometrySource(mesh)])),
@@ -100,7 +111,7 @@ export class RigEditSession {
       morphs:new Map([...this.objects].filter(([,node])=>(node as THREE.Mesh).morphTargetInfluences).map(([uuid,node])=>[uuid,(node as THREE.Mesh).morphTargetInfluences!.slice()]))};
   }
   private captureSnapshot(state:RigSnapshot):RigSnapshot {
-    return {nodes:new Map([...state.nodes].map(([id,rest])=>[id,structuredClone(rest)])),children:new Map([...state.children].map(([id,children])=>[id,children.slice()])),joints:new Map([...state.joints].map(([skin,joints])=>[skin,joints.slice()])),geometries:new Map(state.geometries),geometryEdits:new Map(state.geometryEdits),skins:new Map([...state.skins].map(([skin,inverses])=>[skin,inverses.map(matrix=>matrix.slice())])),clips:cloneClips(state.clips),tips:new Map([...state.tips].map(([id,point])=>[id,point.slice()])),morphs:new Map([...state.morphs].map(([id,values])=>[id,values.slice()]))};
+    return {objects:new Map(state.objects),clipSources:state.clipSources.slice(),removedTargets:new Set(state.removedTargets),nodes:new Map([...state.nodes].map(([id,rest])=>[id,structuredClone(rest)])),children:new Map([...state.children].map(([id,children])=>[id,children.slice()])),joints:new Map([...state.joints].map(([skin,joints])=>[skin,joints.slice()])),geometries:new Map(state.geometries),geometryEdits:new Map(state.geometryEdits),skins:new Map([...state.skins].map(([skin,inverses])=>[skin,inverses.map(matrix=>matrix.slice())])),clips:cloneClips(state.clips),tips:new Map([...state.tips].map(([id,point])=>[id,point.slice()])),morphs:new Map([...state.morphs].map(([id,values])=>[id,values.slice()]))};
   }
   private apply(snapshot:RigSnapshot) {
     const changes:{mesh:THREE.Mesh;geometry:THREE.BufferGeometry}[]=[];
@@ -111,7 +122,11 @@ export class RigEditSession {
       if(this.geometrySource(mesh)!==expected)throw new Error('Joint-index history conflicts with later geometry changes.');
       changes.push({mesh,geometry});
     }
-    for(const [id,node] of this.objects)if(!snapshot.nodes.has(id))node.removeFromParent();
+    for(const node of this.variants)if(snapshot.objects.get(node.uuid)!==node)node.removeFromParent();
+    // Retain detached registered joints for redo and for an Add transaction that
+    // restores rest before attaching its newly registered joint. Active variants
+    // are selected by the snapshot, rather than discarded from the registry.
+    for(const [id,node] of snapshot.objects)this.objects.set(id,node);
     for(const [id,children] of snapshot.children) {
       const parent=this.objects.get(id)!;
       if(children.join('|')!==parent.children.filter(child=>this.objects.has(child.uuid)).map(child=>child.uuid).join('|')) {
@@ -125,7 +140,7 @@ export class RigEditSession {
     }
     for(const [skeleton,inverses] of snapshot.skins) this.setSkin(skeleton,snapshot.joints.get(skeleton)!.map(id=>this.bones.get(id)!),inverses.map(values=>new THREE.Matrix4().fromArray(values)));
     // Replay only a structural delta, never geometry captured by unrelated rig actions.
-    for(const {mesh,geometry} of changes)this.applyGeometry(mesh,geometry);
+    for(const {mesh,geometry} of changes)this.applyGeometry(this.objects.get(mesh.uuid) as THREE.Mesh,geometry);
     this.appliedGeometryEdits=new Map(snapshot.geometryEdits);
     for(const [uuid,values] of snapshot.morphs) (this.objects.get(uuid) as THREE.Mesh).morphTargetInfluences=values.slice();
     this.root.updateWorldMatrix(true,true); this.root.updateMatrixWorld(true);
@@ -140,17 +155,118 @@ export class RigEditSession {
     if(this.mode!=='edit')throw new Error('Enter Edit Skeleton before changing joints.');
     if(this.isGestureActive)throw new Error('Finish the joint drag before changing joints.');
   }
+  deletionSummary(uuid:string,scope:RemovalScope):RemovalSummary {
+    const removed=removalBones(this.root,uuid,scope),summary:RemovalSummary={removedJointCount:removed.size,affectedVertices:0,removedTrackCount:0,staticMeshCount:0,retainedTransformCount:0,warnings:[]};
+    const staticMeshes=new Set<THREE.Object3D>(),source=getSourceDocument(this.root),variants=new Map<string,string>();
+    for(const bone of removed) {
+      const definition=source?.nodes?.[getSourceAssociation(bone)?.nodes!];
+      if(definition&&(definition.mesh!==undefined||definition.camera!==undefined))throw new Error('This joint carries a node-level mesh or camera. Its attachment needs a source-aware removal contract.');
+    }
+    this.root.traverse(node=>{
+      if(!(node instanceof THREE.SkinnedMesh))return;
+      const {kept,slots}=removalSlots(node.skeleton,removed),geometry=this.geometrySource(node),values=remapInfluences(node,geometry,slots);
+      const association=getSourceAssociation(node),key=association?.meshes===undefined?geometry.uuid:`${association.meshes}:${association.primitives}`;
+      const signature=JSON.stringify([Boolean(kept.length),Array.from(values)]),previous=variants.get(key);
+      if(previous&&previous!==signature)throw new Error('Shared geometry requires conflicting joint-index rewrites.');variants.set(key,signature);
+      if(node.skeleton.bones.some(bone=>removed.has(bone))) {
+        const primitive=source?.meshes?.[association?.meshes!]?.primitives?.[association?.primitives!];
+        if(primitive?.extensions?.KHR_draco_mesh_compression||Object.keys(primitive?.attributes??{}).some(key=>/^(JOINTS|WEIGHTS)_[1-9]/.test(key)))throw new Error('Compressed or additional skin influences require a separate deletion contract.');
+        const weights=getSourceAudit(this.root)?.rawSkinWeights;
+        if(weights&&(weights.unreadableAccessors||weights.invalidSumVertices||weights.zeroWeightVertices))throw new Error('Original skin weights need repair and reimport before safe joint deletion.');
+      }
+      const indices=geometry.getAttribute('skinIndex'),weights=geometry.getAttribute('skinWeight');
+      for(let v=0;v<indices.count;v++)if([0,1,2,3].some(c=>removed.has(node.skeleton.bones[indices.getComponent(v,c)])&&weights.getComponent(v,c)>0))summary.affectedVertices++;
+      if(!kept.length){summary.staticMeshCount++;staticMeshes.add(node);}
+    });
+    const staticNodes=new Set<number>();
+    this.root.traverse(node=>{
+      if(staticMeshes.has(node)||(node instanceof THREE.Mesh&&!(node instanceof THREE.SkinnedMesh)&&this.baseline.objects.get(node.uuid) instanceof THREE.SkinnedMesh)) {
+        const index=getSourceAssociation(node)?.nodes;if(index!==undefined)staticNodes.add(index);
+      }
+    });
+    const staticSourceMeshes=new Set([...staticNodes].map(index=>source?.nodes?.[index]?.mesh));
+    for(const [index,node] of (source?.nodes??[]).entries())if(node.mesh!==undefined&&staticSourceMeshes.has(node.mesh)&&!staticNodes.has(index))throw new Error('Static baking would change another source mesh instance. Export requires a separate instance-preserving contract.');
+    const keptChildren=(node:THREE.Object3D):boolean=>node.children.some(child=>!(child instanceof THREE.Bone)||!removed.has(child)||keptChildren(child));
+    for(const bone of removed)if(keptChildren(bone))summary.retainedTransformCount++;
+    for(const clip of this.clips)for(const track of clip.tracks) {
+      const binding=THREE.PropertyBinding.parseTrackName(track.name),target=THREE.PropertyBinding.findNode(this.root,binding.nodeName);
+      if(removed.has(target as THREE.Bone)||(staticMeshes.has(target as THREE.Object3D)&&['position','quaternion','scale'].includes(binding.propertyName)))summary.removedTrackCount++;
+    }
+    if(summary.affectedVertices)summary.warnings.push('Weights transfer to the nearest surviving ancestor in each skin, or its first remaining joint. Shape and motion can change.');
+    if(summary.removedTrackCount)summary.warnings.push('Animation tracks on removed joints are deleted. Empty clips are removed.');
+    if(summary.retainedTransformCount)summary.warnings.push('A static transform anchor preserves child coordinates; it is not a joint.');
+    if(summary.staticMeshCount)summary.warnings.push('Meshes with no surviving joints become static, baked in authored rest; skin deformation is removed.');
+    return summary;
+  }
+  removeJoints(uuid:string,scope:RemovalScope) {
+    this.editableStructure();this.deletionSummary(uuid,scope);
+    this.transaction(()=>{
+      const removed=removalBones(this.root,uuid,scope),plans=new Map<THREE.Skeleton,ReturnType<typeof removalSlots>>();
+      for(const skin of this.skeletons)plans.set(skin,removalSlots(skin,removed));
+      const meshPlans:{mesh:THREE.SkinnedMesh;geometry:THREE.BufferGeometry}[]=[],sourceVariants=new Map<string,string>();
+      this.root.traverse(node=>{
+        if(!(node instanceof THREE.SkinnedMesh)||!node.skeleton.bones.some(bone=>removed.has(bone)))return;
+        const plan=plans.get(node.skeleton)!,sourceGeometry=this.geometrySource(node),values=remapInfluences(node,sourceGeometry,plan.slots);
+        const association=getSourceAssociation(node),key=association?.meshes===undefined?node.geometry.uuid:`${association.meshes}:${association.primitives}`;
+        const signature=JSON.stringify([plan.kept.length>0,Array.from(values)]),existing=sourceVariants.get(key);
+        if(existing&&existing!==signature)throw new Error('Shared geometry requires conflicting joint-index rewrites.');sourceVariants.set(key,signature);
+        const geometry=plan.kept.length?sourceGeometry.clone():bakeRestSkin(node,sourceGeometry);
+        if(plan.kept.length)geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(values,4));
+        this.ownedGeometries.add(geometry);meshPlans.push({mesh:node,geometry});
+      });
+      const tracksToRemove=new Set<THREE.Object3D>(removed),staticMeshes=new Set(meshPlans.filter(plan=>!plans.get(plan.mesh.skeleton)!.kept.length).map(plan=>plan.mesh));
+      const clips:THREE.AnimationClip[]=[],clipSources:number[]=[];
+      this.clips.forEach((clip,index)=>{
+        const changed=clip.clone();changed.tracks=changed.tracks.filter(track=>{
+          const binding=THREE.PropertyBinding.parseTrackName(track.name),target=THREE.PropertyBinding.findNode(this.root,binding.nodeName) as THREE.Object3D;
+          // Mesh TRS animation changes meaning after unskin; keep morph weights only.
+          return !tracksToRemove.has(target)&&!(staticMeshes.has(target as THREE.SkinnedMesh)&&['position','quaternion','scale'].includes(binding.propertyName));
+        });
+        if(changed.tracks.length){holdClipDuration(changed);clips.push(changed);clipSources.push(this.authored.clipSources[index]);}
+      });
+      const removedTargets=new Set(this.authored.removedTargets);
+      for(const bone of removed){const index=getSourceAssociation(bone)?.nodes;if(index!==undefined)removedTargets.add(index);}
+      this.authored={...this.authored,clips,clipSources,removedTargets};
+      const replace=(old:THREE.Object3D,next:THREE.Object3D)=>{
+        next.copy(old,false);next.uuid=old.uuid;for(const child of [...old.children])next.add(child);
+        const parent=old.parent;if(parent){const index=parent.children.indexOf(old);old.removeFromParent();parent.add(next);parent.children.splice(parent.children.indexOf(next),1);parent.children.splice(index,0,next);}
+        this.objects.set(next.uuid,next);this.variants.add(next);
+      };
+      // Descendants first: retain frames only on paths to surviving children/attachments.
+      for(const bone of [...removed].reverse()) {
+        if(bone.children.length) {
+          const frame=new THREE.Object3D();replace(bone,frame);this.created.add(frame.uuid);
+          const source=getSourceAssociation(bone)?.nodes;if(source!==undefined)this.frameSources.set(frame.uuid,source);
+        }else bone.removeFromParent();
+      }
+      for(const {mesh,geometry} of meshPlans) {
+        let target:THREE.Mesh=mesh;
+        if(staticMeshes.has(mesh)) {
+          const replacement=new THREE.Mesh();replace(mesh,replacement);copySourceAssociation(mesh,replacement);
+          replacement.material=getAuthoredMaterialSet(mesh)??mesh.material;captureAuthoredMaterials(replacement);target=replacement;
+        }
+        const previous=this.authored.geometryEdits.get(mesh.uuid),edit={before:previous?.before??this.geometrySource(mesh),geometry};
+        this.authored={...this.authored,geometryEdits:new Map(this.authored.geometryEdits).set(mesh.uuid,edit)};
+        this.applyGeometry(target,geometry);this.appliedGeometryEdits.set(mesh.uuid,edit);
+      }
+      for(const [skin,plan] of plans) {
+        const inverses=plan.kept.map(bone=>skin.boneInverses[skin.bones.indexOf(bone)]);
+        this.setSkin(skin,plan.kept,inverses);
+      }
+      const tips=new Map(this.authored.tips);for(const bone of removed)tips.delete(bone.uuid);this.authored={...this.authored,tips};
+    });
+  }
   addJoint(parentUuid:string):string {
     this.editableStructure();
     const parent=this.bones.get(parentUuid);
-    if(!parent||!this.authored.nodes.has(parentUuid))throw new Error('Select an active parent joint.');
+    if(!parent||(!this.authored.nodes.has(parentUuid)||this.objects.get(parentUuid)!==parent))throw new Error('Select an active parent joint.');
     const skins=[...this.skeletons].filter(skin=>skin.bones.includes(parent));
     if(!skins.length)throw new Error('Parent joint belongs to no skin.');
     const bone=new THREE.Bone();let ordinal=1;
     while([...this.objects.values()].some(node=>node.name===`Joint_${ordinal}`))ordinal++;
     bone.name=`Joint_${ordinal}`;
     bone.position.fromArray(this.getTerminalTip(parentUuid)??[0,.2,0]);
-    this.objects.set(bone.uuid,bone);this.bones.set(bone.uuid,bone);this.created.add(bone.uuid);
+    this.objects.set(bone.uuid,bone);this.bones.set(bone.uuid,bone);this.created.add(bone.uuid);this.variants.add(bone);
     this.transaction(()=>{
       parent.add(bone);this.root.updateWorldMatrix(true,true);
       const world=documentMatrix(bone);invertible(world);
@@ -160,7 +276,7 @@ export class RigEditSession {
   }
   deletionBlockReason(uuid:string):string|null {
     const bone=this.bones.get(uuid),source=getSourceDocument(this.root),index=bone&&getSourceAssociation(bone)?.nodes;
-    if(!bone||!this.authored.nodes.has(uuid))return 'Select an active joint.';
+    if(!bone||(!this.authored.nodes.has(uuid)||this.objects.get(uuid)!==bone))return 'Select an active joint.';
     if(!(bone.parent instanceof THREE.Bone))return 'Root joints cannot be deleted.';
     if(bone.children.length)return 'Delete only a leaf joint without children or attachments.';
     if(index!==undefined&&(source?.skins??[]).some((skin:any)=>skin.skeleton===index))return 'The skin skeleton anchor cannot be deleted.';
@@ -266,11 +382,11 @@ export class RigEditSession {
   }
   commitJoint(uuid:string,change:JointChange,childPolicy:ChildPolicy='follow') {
     if(this.mode!=='edit') throw new Error('Enter Edit Skeleton before changing authored rest.');
-    const joint=this.bones.get(uuid); if(!joint||!this.authored.nodes.has(uuid)) throw new Error('Unknown joint.');
+    const joint=this.bones.get(uuid); if(!joint||(!this.authored.nodes.has(uuid)||this.objects.get(uuid)!==joint)) throw new Error('Unknown joint.');
     if(change.position) assertFinite(change.position,3);
     if(change.quaternion) { assertFinite(change.quaternion,4); if(new THREE.Quaternion().fromArray(change.quaternion).length()<1e-8) throw new Error('Invalid joint rotation.'); }
     this.root.updateWorldMatrix(true,true);
-    for(const [id,bone] of this.bones)if(this.authored.nodes.has(id))invertible(documentMatrix(bone));
+    for(const [id,bone] of this.bones)if(this.authored.nodes.has(id)&&this.objects.get(id)===bone)invertible(documentMatrix(bone));
     this.transaction(()=>{
       const oldWorld=new Map([...this.bones].map(([id,bone])=>[id,documentMatrix(bone)]));
       const children=joint.children.filter(child=>!child.name.startsWith('__ascope_internal'));
@@ -293,7 +409,7 @@ export class RigEditSession {
       }
       const changes=new Map();
       for(const [id,bone] of this.bones) {
-        const old=this.authored.nodes.get(id);if(!old)continue;
+        const old=this.authored.nodes.get(id);if(!old||this.objects.get(id)!==bone)continue;
         if(equalArray(old.position,bone.position.toArray()) && equalArray(old.quaternion,bone.quaternion.toArray())) continue;
         const rotation=bone.quaternion.clone().multiply(new THREE.Quaternion().fromArray(old.quaternion).invert());
         changes.set(id,{oldPosition:new THREE.Vector3().fromArray(old.position),newPosition:bone.position.clone(),rotation});
@@ -308,7 +424,7 @@ export class RigEditSession {
   setBoneLength(uuid:string,childUuid:string|null,length:number,childPolicy:ChildPolicy='follow') {
     if(!(length>0) || !Number.isFinite(length)) throw new Error('Length must be finite and positive.');
     const joint=this.bones.get(uuid),child=childUuid && this.bones.get(childUuid);
-    if(!joint||!this.authored.nodes.has(uuid)) throw new Error('Unknown joint.');
+    if(!joint||(!this.authored.nodes.has(uuid)||this.objects.get(uuid)!==joint)) throw new Error('Unknown joint.');
     if(!childUuid) {
       const direction=new THREE.Vector3().fromArray(this.getTerminalTip(uuid)??[0,1,0]);
       if(direction.length()<1e-8) throw new Error('Terminal guide has no direction.');
@@ -319,7 +435,7 @@ export class RigEditSession {
   }
   setTerminalTip(uuid:string,point:number[]) {
     assertFinite(point,3);
-    const joint=this.bones.get(uuid); if(!joint||!this.authored.nodes.has(uuid)||joint.children.some(node=>node instanceof THREE.Bone)) throw new Error('Terminal guide requires an active leaf joint.');
+    const joint=this.bones.get(uuid); if(!joint||(!this.authored.nodes.has(uuid)||this.objects.get(uuid)!==joint)||joint.children.some(node=>node instanceof THREE.Bone)) throw new Error('Terminal guide requires an active leaf joint.');
     if(this.mode!=='edit') throw new Error('Enter Edit Skeleton before authoring a guide.');
     const source=getSourceDocument(this.root),index=getSourceAssociation(joint)?.nodes;
     const definition=index===undefined?undefined:source?.nodes?.[index];
@@ -346,7 +462,7 @@ export class RigEditSession {
   previewPoseRotation(uuid:string,rotation:number[]) {
     if(this.mode!=='pose') throw new Error('Enter Pose Preview before posing.');
     assertFinite(rotation,4); const joint=this.bones.get(uuid);
-    if(!joint||!this.authored.nodes.has(uuid)||new THREE.Quaternion().fromArray(rotation).length()<1e-8) throw new Error('Invalid preview joint rotation.');
+    if(!joint||(!this.authored.nodes.has(uuid)||this.objects.get(uuid)!==joint)||new THREE.Quaternion().fromArray(rotation).length()<1e-8) throw new Error('Invalid preview joint rotation.');
     joint.quaternion.fromArray(rotation).normalize(); joint.updateMatrix(); this.root.updateMatrixWorld(true);
     this.previewRevision++;
   }

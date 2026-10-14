@@ -13,6 +13,8 @@ const russian:Record<string,string>={
   'Export and reimport verified repairs before deleting a joint.':'Сначала сохраните и заново откройте GLB с проверенными ремонтами.',
   'Enter Edit Skeleton before changing joints.':'Для добавления или удаления перейдите в режим «Редактировать».',
   'Return to Hybrid shading before deleting a joint.':'Для удаления сустава верните шейдинг Hybrid.',
+  'This joint carries a node-level mesh or camera. Its attachment needs a source-aware removal contract.':'Этот сустав содержит меш или камеру в исходном узле. Для сохранения такого вложения нужен отдельный контракт удаления.',
+  'Static baking would change another source mesh instance. Export requires a separate instance-preserving contract.':'Статический меш изменил бы другой экземпляр исходной модели. Для сохранения экземпляров нужен отдельный контракт экспорта.',
   'Joint-index history conflicts with later geometry changes.':'История удаления конфликтует с более поздними изменениями меша. Они сохранены; повторение операции заблокировано.',
 };
 export function jointDeleteMessage(reason:string|null|undefined,language:string) {return reason?(language==='ru'?russian[reason]??reason:reason):null;}

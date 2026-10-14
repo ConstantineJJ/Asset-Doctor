@@ -7,6 +7,8 @@ import { InspectorPanel } from './components/InspectorPanel';
 import { AnimationTimeline } from './components/AnimationTimeline';
 import { RigEditorPanel } from './components/RigEditorPanel';
 import {RigJointMenu} from './components/RigJointMenu';
+import {RigRemovalDialog} from './components/RigRemovalDialog';
+import type {RemovalScope,RemovalSummary} from './rig/RigRemoval';
 import {jointDeleteMessage} from './rig/RigMessages';
 import type { RigEditSession,RigMode } from './rig/RigEditSession';
 import type { RigGizmoSettings } from './rig/RigGizmo';
@@ -104,6 +106,10 @@ export function App() {
   const [rigSettings,setRigSettings]=useState<RigGizmoSettings>({tool:'translate',space:'local',target:'joint',childPolicy:'follow'});
   const [rigContext,setRigContext]=useState<{uuid:string;x:number;y:number}|null>(null);
   const closeRigContext=useCallback(()=>setRigContext(null),[]);
+  type RemovalRequest={session:RigEditSession;root:THREE.Group;revision:number;uuid:string;name:string;scope:RemovalScope;summary:RemovalSummary};
+  const [pendingRigRemoval,setPendingRigRemoval]=useState<RemovalRequest|null>(null);
+  const pendingRigRemovalRef=useRef<RemovalRequest|null>(null);
+  const cancelRigRemoval=useCallback(()=>{pendingRigRemovalRef.current=null;setPendingRigRemoval(null);},[]);
   const [savedExport, setSavedExport] = useState<RepairedExportResult | null>(null);
   if (!healEngineRef.current) {
     healEngineRef.current = new SurgicalHealEngine();
@@ -561,6 +567,7 @@ export function App() {
     rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;setRigExportResult(null);setSavedRigExport(null);
     unsavedRepairsRef.current=session.hasEdits || (healEngineRef.current?.getActiveReports().length??0)>0;
     setAnimationClips(analyzeAnimations(session.clips,analyzeSkeleton(root).rootBoneNames));
+    setActiveClipIndex(index=>Math.min(index,Math.max(0,session.clips.length-1)));
     void runAnalysisPipeline(root,session.clips,assetDetailsRef.current.name,assetDetailsRef.current.size);
   },[runAnalysisPipeline]);
   const handleCanvasMount = useCallback(
@@ -1274,7 +1281,7 @@ export function App() {
     (!savedRigExport || savedRigExport!==rigExportResultRef.current)
   );
   unsavedRepairsRef.current = hasUnsavedRepairs;
-  useEffect(()=>{sceneManagerRef.current?.setRigInteractionBlocked(healBusy||exportBusy||repairQueueState.status==='running');},[healBusy,exportBusy,repairQueueState.status]);
+  useEffect(()=>{sceneManagerRef.current?.setRigInteractionBlocked(healBusy||exportBusy||repairQueueState.status==='running'||Boolean(pendingRigRemoval));},[healBusy,exportBusy,repairQueueState.status,pendingRigRemoval]);
 
   const runAssetSwitch = async (pending: PendingAssetSwitch) => {
     if (pending.kind === 'file') await openFileNow(pending.file);
@@ -1418,7 +1425,7 @@ export function App() {
 
   const handleRigAction=(action:(session:RigEditSession)=>void,undo=false)=>{
     const session=rigSessionRef.current;
-    if(!session||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    if(!session||pendingRigRemovalRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
     setRigContext(null);setRigError(null);sceneManagerRef.current?.detachRigMixer();rigUndoingRef.current=undo;
     try {action(session);sceneManagerRef.current?.refreshRigStructure();sceneManagerRef.current?.syncRigClips();publishRigChange();}
     catch(error){sceneManagerRef.current?.syncRigClips();setRigError(jointDeleteMessage(error instanceof Error?error.message:String(error),language));}
@@ -1437,21 +1444,37 @@ export function App() {
     setRigContext(null);if(!uuid)return;
     handleRigAction(session=>{const added=session.addJoint(uuid);sceneManagerRef.current?.selectObject(added);});
   };
-  const handleDeleteJoint=(uuid=selectedUuid)=>{
-    setRigContext(null);if(!uuid)return;
-    handleRigAction(session=>{
+  const validateRemovalContext=()=>{
       if(healEngineRef.current?.getActiveReports().length)throw new Error('Export and reimport verified repairs before deleting a joint.');
       const manager=sceneManagerRef.current!,root=currentAssetRootRef.current!;
       let presentationGeometry=false;root.traverse(node=>{if(node instanceof THREE.Mesh&&manager.renderModeManager.authoredGeometry(node)!==node.geometry)presentationGeometry=true;});
       if(presentationGeometry)throw new Error('Return to Hybrid shading before deleting a joint.');
-      const parent=session.root.getObjectByProperty('uuid',uuid)?.parent;
-      session.deleteJoint(uuid);manager.selectObject(parent?.uuid??null);
+  };
+  const handleDeleteJoint=(uuid=selectedUuid,scope:RemovalScope='joint')=>{
+    setRigContext(null);const session=rigSessionRef.current,root=currentAssetRootRef.current;
+    if(!uuid||!session||!root||pendingRigRemovalRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    try {
+      validateRemovalContext();
+      if(session.mode!=='edit')throw new Error('Enter Edit Skeleton before changing joints.');
+      const request:RemovalRequest={session,root,revision:session.revision,uuid,name:root.getObjectByProperty('uuid',uuid)?.name??'',scope,summary:session.deletionSummary(uuid,scope)};
+      pendingRigRemovalRef.current=request;setPendingRigRemoval(request);setRigError(null);
+    }catch(error){setRigError(jointDeleteMessage(error instanceof Error?error.message:String(error),language));}
+  };
+  const confirmRigRemoval=()=>{
+    const request=pendingRigRemovalRef.current;cancelRigRemoval();if(!request)return;
+    if(request.session!==rigSessionRef.current||request.root!==currentAssetRootRef.current||request.revision!==request.session.revision||request.session.mode!=='edit'||request.session.isGestureActive||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current){
+      setRigError(language==='ru'?'Модель изменилась. Повторно выберите удаление и проверьте предупреждение.':'The model changed. Review a new deletion warning.');return;
+    }
+    handleRigAction(session=>{
+      validateRemovalContext();
+      session.removeJoints(request.uuid,request.scope);sceneManagerRef.current?.selectObject(null);
     });
   };
 
   // Ctrl+Z uses model histories; text fields retain their native text Undo.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if(pendingRigRemovalRef.current)return;
       if(e.defaultPrevented||e.isComposing||e.target instanceof HTMLElement&&(e.target.isContentEditable||e.target.closest('input,textarea,select')))return;
       if(e.ctrlKey&&!e.altKey&&!e.shiftKey&&(e.code==='KeyZ'||e.key.toLowerCase()==='z')) {
         e.preventDefault();
@@ -1484,12 +1507,12 @@ export function App() {
     const session=rigSessionRef.current;
     if(!session||!selectedUuid)return null;
     if(healEngineRef.current?.getActiveReports().length)return 'Export and reimport verified repairs before deleting a joint.';
-    return session.deletionBlockReason(selectedUuid);
+    return null;
   },[selectedUuid,rigSessionRef.current,rigSessionRef.current?.revision,healReport]);
-  const rigBusy=healBusy||exportBusy||rigDragging||repairQueueState.status==='running';
+  const rigBusy=healBusy||exportBusy||rigDragging||repairQueueState.status==='running'||Boolean(pendingRigRemoval);
   const rigEditorProps={session:rigSessionRef.current,selectedUuid,settings:rigSettings,activeClipIndex,busy:rigBusy,enabled:currentExportSourceRef.current?.kind==='buffer'&&/\.glb$/i.test(fileName),error:rigError,exportResult:rigExportResult,
     onVerifyExport:()=>void handleRigExport(false),onSaveExport:()=>void handleRigExport(true),onMode:handleRigMode,onAction:handleRigAction,onUndo:handleUndoRig,
-    onAddJoint:()=>handleAddJoint(),onDeleteJoint:()=>handleDeleteJoint(),deleteReason:jointDeleteMessage(selectedDeleteReason,language),
+    onAddJoint:()=>handleAddJoint(),onDeleteJoint:()=>handleDeleteJoint(),onDeleteChain:()=>handleDeleteJoint(selectedUuid,'chain'),deleteReason:jointDeleteMessage(selectedDeleteReason,language),
     onPreview:(uuid:string,quaternion:number[])=>{setRigError(null);try{sceneManagerRef.current?.previewRigRotation(uuid,quaternion);}catch(error){setRigError(error instanceof Error?error.message:String(error));}},
     onSettings:(settings:RigGizmoSettings)=>{setRigSettings(settings);sceneManagerRef.current?.setRigGizmoSettings(settings);}
   };
@@ -1497,7 +1520,8 @@ export function App() {
   const contextReason=rigSessionRef.current?.mode!=='edit'?'Enter Edit Skeleton before changing joints.':selectedDeleteReason;
   return (
     <div className="asset-doctor-ui flex flex-col h-screen w-screen bg-[#131518] text-gray-100 overflow-hidden font-sans select-none">
-      {rigContext&&contextBone&&<RigJointMenu joint={{...rigContext,name:contextBone.name}} reason={jointDeleteMessage(contextReason,language)} busy={rigBusy||rigSessionRef.current?.mode!=='edit'} onClose={closeRigContext} onAdd={()=>handleAddJoint(rigContext.uuid)} onDelete={()=>handleDeleteJoint(rigContext.uuid)} />}
+      {pendingRigRemoval&&<RigRemovalDialog name={pendingRigRemoval.name} scope={pendingRigRemoval.scope} summary={pendingRigRemoval.summary} onCancel={cancelRigRemoval} onConfirm={confirmRigRemoval}/>}
+      {rigContext&&contextBone&&<RigJointMenu joint={{...rigContext,name:contextBone.name}} reason={jointDeleteMessage(contextReason,language)} busy={rigBusy||rigSessionRef.current?.mode!=='edit'} onClose={closeRigContext} onAdd={()=>handleAddJoint(rigContext.uuid)} onDelete={()=>handleDeleteJoint(rigContext.uuid)} onDeleteChain={()=>handleDeleteJoint(rigContext.uuid,'chain')} />}
       {/* Top Application Toolbar */}
       <TopToolbar
         onPickFile={isDesktop() ? handlePickFile : undefined}

@@ -58,6 +58,7 @@ export const getTextureExtras = (texture: THREE.Texture) => textureExtras.get(te
 /** Parser source and canonical identities are read-only runtime facts, never extras. */
 export const getSourceDocument = (root: THREE.Object3D) => documents.get(root);
 export const getSourceAssociation = (node: THREE.Object3D) => sourceAssociations.get(node);
+export function copySourceAssociation(source:THREE.Object3D,target:THREE.Object3D) {const association=sourceAssociations.get(source);if(association)sourceAssociations.set(target,{...association});}
 
 /** Source facts and author extras are shared read-only by presentation clones. */
 export function copySourceMetadata(source: THREE.Object3D, clone: THREE.Object3D) {

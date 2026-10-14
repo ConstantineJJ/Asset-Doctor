@@ -1679,6 +1679,7 @@ export class SceneManager {
   public syncRigClips() {
     if(!this.rigSession || !this.currentAssetRoot) return;
     this.animationClips=this.rigSession.clips;
+    this.activeClipIndex=Math.min(this.activeClipIndex,Math.max(0,this.animationClips.length-1));
     if(!this.animationMixer && this.rigSession.mode!=='edit') this.animationMixer=this.createAnimationMixer(this.currentAssetRoot);
     this.callbacks.onAnimationTimeUpdate?.(0,this.animationClips[this.activeClipIndex]?.duration??0);
     this.rigGizmo.configure(this.rigSession,this.selectedMeshUuid,this.rigSettings);

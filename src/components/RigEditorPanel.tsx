@@ -7,14 +7,14 @@ import type { RigExportResult } from '../rig/RigExportService';
 
 interface Props {
   variant?:'tools'|'clips';
-  onAddJoint:()=>void;onDeleteJoint:()=>void;deleteReason:string|null;
+  onAddJoint:()=>void;onDeleteJoint:()=>void;onDeleteChain:()=>void;deleteReason:string|null;
   session:RigEditSession|null; selectedUuid:string|null; settings:RigGizmoSettings; busy:boolean; enabled:boolean; error:string|null; activeClipIndex:number;
   onMode:(mode:RigMode)=>void; onSettings:(settings:RigGizmoSettings)=>void; onAction:(action:(session:RigEditSession)=>void)=>void;
   exportResult:RigExportResult|null;onVerifyExport:()=>void;onSaveExport:()=>void;
   onPreview:(uuid:string,quaternion:number[])=>void;
   onUndo:()=>void;
 }
-export function RigEditorPanel({variant='clips',onAddJoint,onDeleteJoint,deleteReason,session,selectedUuid,settings,busy,enabled,error,activeClipIndex,onMode,onSettings,onAction,exportResult,onVerifyExport,onSaveExport,onPreview,onUndo}:Props) {
+export function RigEditorPanel({variant='clips',onAddJoint,onDeleteJoint,onDeleteChain,deleteReason,session,selectedUuid,settings,busy,enabled,error,activeClipIndex,onMode,onSettings,onAction,exportResult,onVerifyExport,onSaveExport,onPreview,onUndo}:Props) {
   const {language}=useI18n(); const label=(en:string,ru:string)=>language==='ru'?ru:en;
   const bone=session?.root.getObjectByProperty('uuid',selectedUuid??'');
   const selected=bone instanceof THREE.Bone?bone:null;
@@ -29,13 +29,13 @@ export function RigEditorPanel({variant='clips',onAddJoint,onDeleteJoint,deleteR
     setLength(String(Number((child?.position.length()??new THREE.Vector3().fromArray(session?.getTerminalTip(selected.uuid)??[0,.2,0]).length()).toFixed(6))));
   },[selectedUuid,session?.revision,session?.previewRevision,session?.mode,settings.endChildUuid]);
   useEffect(()=>{setDuration(String(Number((session?.clips[activeClipIndex]?.duration??1).toFixed(6))));setClipName(session?.clips[activeClipIndex]?.name??'');},[session?.revision,activeClipIndex,session]);
-  if(!session || (!session.hasSkeleton&&!session.clips.length)) return null;
+  if(!session || (!session.hasSkeleton&&!session.clips.length&&!session.hasEdits&&!session.canUndo)) return null;
   const button='px-2 py-1.5 rounded border cursor-pointer text-xs';
   const input='w-full bg-[#111318] border border-[#343944] rounded px-1 py-1 text-gray-200';
   const update=(patch:Partial<RigGizmoSettings>)=>onSettings({...settings,...patch,...(patch.tool==='twist'?{target:'joint' as const}:{})});
   const edit=session.mode==='edit',pose=session.mode==='pose';
   if(variant==='tools'&&!session.hasSkeleton)return null;
-  return <section data-testid={variant==='tools'?'rig-toolbar':'rig-editor'} className="bg-[#1c1e24]/95 border border-blue-700 rounded p-2 space-y-2 text-xs">
+  return <section data-testid={variant==='tools'?'rig-toolbar':'rig-editor'} className={`bg-[#1c1e24]/95 border border-blue-700 rounded p-2 space-y-2 text-xs ${variant==='tools'?'w-fit max-w-[min(55rem,100%)]':'w-full'}`}>
     {variant==='clips'&&<h4 className="font-semibold text-blue-200">{label('Animations & GLB','Анимации и GLB')}</h4>}
     <fieldset disabled={busy || !enabled} className="space-y-2 disabled:opacity-60">
       {variant==='tools'&&<>
@@ -49,7 +49,7 @@ export function RigEditorPanel({variant='clips',onAddJoint,onDeleteJoint,deleteR
           <label>{label('Children','Дочерние кости')}<select aria-label="Rig children policy" className={input} value={settings.childPolicy} onChange={event=>update({childPolicy:event.target.value as any})}><option value="follow">{label('Follow chain','Перемещать цепочку')}</option><option value="hold">{label('Hold world position','Удержать положение')}</option></select></label>
         </>}
         </div>
-        {edit&&<div className="flex flex-wrap items-center gap-1"><button data-tone="edit" className={button} disabled={!selected} onClick={onAddJoint}>{label('Add Joint','Добавить сустав')}</button><button data-tone="danger" className={button} disabled={!selected||Boolean(deleteReason)} title={deleteReason??label('Delete unweighted, unanimated leaf','Удалить конечный сустав без весов и анимации')} onClick={onDeleteJoint}>{label('Delete Joint','Удалить сустав')}</button>{selected&&deleteReason&&<span data-testid="joint-delete-reason" className="text-red-200 text-[10px] max-w-sm">{deleteReason}</span>}</div>}
+        {edit&&<div className="flex flex-wrap items-center gap-1"><button data-tone="edit" className={button} disabled={!selected} onClick={onAddJoint}>{label('Add Joint','Добавить сустав')}</button><button data-testid="rig-delete-joint" data-tone="danger" className={button} disabled={!selected||Boolean(deleteReason)} title={deleteReason??label('Review deletion consequences','Посмотреть последствия удаления')} onClick={onDeleteJoint}>{label('Delete Joint','Удалить сустав')}</button><button data-testid="rig-delete-chain" data-tone="danger" className={button} disabled={!selected||Boolean(deleteReason)} onClick={onDeleteChain}>{label('Delete Chain','Удалить цепочку')}</button>{selected&&deleteReason&&<span data-testid="joint-delete-reason" className="text-red-200 text-[10px] max-w-sm">{deleteReason}</span>}</div>}
         {selected && <details className="max-h-56 overflow-y-auto custom-scrollbar"><summary className="cursor-pointer text-blue-200">{selected.name||label('Unnamed joint','Без имени')} · {label('Coordinates & length','Координаты и длина')}</summary><div className="space-y-2 pt-2">
           {edit && <><label>{label('Local joint position','Локальная позиция сустава')}</label><div className="grid grid-cols-3 gap-1">{position.map((value,axis)=><input key={axis} aria-label={`Joint position ${'XYZ'[axis]}`} type="number" step="0.01" className={input} value={value} onChange={event=>setPosition(values=>values.map((v,i)=>i===axis?event.target.value:v))}/>)}</div><button data-tone="edit" className={button} onClick={()=>onAction(s=>s.commitJoint(selected.uuid,{position:position.map(Number)},settings.childPolicy))}>{label('Apply Position','Применить позицию')}</button></>}
           <label>{label('Local rotation, degrees','Локальный поворот, градусы')}</label><div className="grid grid-cols-3 gap-1">{rotation.map((value,axis)=><input key={axis} aria-label={`Joint rotation ${'XYZ'[axis]}`} type="number" step="1" className={input} value={value} onChange={event=>setRotation(values=>values.map((v,i)=>i===axis?event.target.value:v))}/>)}</div>

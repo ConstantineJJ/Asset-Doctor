@@ -1,0 +1,50 @@
+# Asset Doctor 2.0.2 — компактные инструменты и подтверждённое удаление
+
+14 октября 2026. Windows/Tauri Desktop. База: принятая владельцем 2.0.1, `e38b0b8`. Политику удаления расширил владелец: weighted, animated и root joints разрешены после предупреждения. Прежний узкий безопасный helper сохранён для старых внутренних контрактов; пользовательский интерфейс использует новую подтверждаемую операцию.
+
+## Что изменено
+
+- Панель инструмента имеет собственную ширину по содержимому, предел 55rem и доступный скролл на узком экране. Пустые области overlay пропускают pointer events к canvas; проверены actual elementFromPoint и движение камеры. Четыре кнопки и единственный ground menu сохранены.
+- Toolbar и RMB menu предлагают **Удалить сустав** / **Удалить цепочку**. Предупреждение показывает число суставов, затронутых вершин, удаляемых дорожек и статических мешей. Фокус первоначально на Отмене; Cancel, Escape, Enter на Cancel и Ctrl+Z в открытом предупреждении не удаляют данные.
+- Delete применяет изменение только после явного подтверждения. Смена asset/session/revision, активный drag/repair/export и технические ошибки безопасно отменяют действие. План пересчитывается перед применением; недопустимые веса не оставляют частичный граф или сломанную историю.
+- При удалении одного сустава дети сохраняют точные координаты под неподвижным Object3D frame. Это не Bone и не точка Gizmo. Frame нужен для корректной анимации, включая неравномерный scale и CUBICSPLINE; авторские extras сохраняются.
+- При удалении цепочки удаляются её Bone descendants. Веса переходят оставшемуся родителю или первому суставу конкретного skin. Если суставов не осталось, SkinnedMesh заменяется обычным Mesh с тем же UUID: Rest bake для position/normal/tangent и morph-данных, без skin attributes. Morph animation остаётся; соответствующая skeletal/mesh-TRS animation удаляется. Пустые клипы удаляются, длительность остальных сохраняется.
+- Undo/Redo/Reset восстанавливают исходные object variants, граф, порядок joints, inverse bind matrices, геометрию, morph defaults и клипы. История structural geometry не перезаписывает независимые Heal-изменения.
+- Source GLB patch сохраняет исходный binary prefix, авторские материалы/текстуры/extras, отдельные interpolation samplers и неизменённые каналы. Новые frames получают отдельные source identities, чтобы GLTFLoader не превращал их обратно в Bones. Полная source/deformation verification сохранена.
+
+**Удаление кости/сустава не удаляет геометрию пальца.** Если нужна именно геометрическая правка формы, это отдельный инструмент.
+
+## Проверки
+
+| Проверка | Результат |
+|---|---|
+| TypeScript | PASS, `evidence/typescript.log` |
+| Unit/integration | **247/247 PASS**, `evidence/unit.log`; 19 Removal cases и 8 новых corruption/root mapping cases |
+| Полный production frontend suite | **66/66 PASS**, 134.1 s; `production-report.json`, без skip/flaky/unexpected |
+| Финальный toolbar/removal/usability suite | **26/26 PASS**, 38.7 s; `final-report.json` |
+| Frontend production build | PASS; прежнее предупреждение большого JS chunk остаётся |
+| Cargo/Tauri check | PASS, 3.03 s; `desktop-check.log` |
+| Windows release + NSIS | PASS; итоговый `desktop-build-final.log`, версия EXE/installer 2.0.2; hashes в BUILD_INFO/SHA256SUMS |
+| Реальный установленный native runtime этой версии | **SKIP**: окна и установщик автоматически не запускались. Ручная проверка владельца впереди |
+
+Full suite включает F01/F03/F05/F02, Compare, Safe Queue Confirm/Cancel/Dialog Error, исходный rig editor, материалы/текстуры, экспорт и сохранение защищённого состояния. Текстурированный Khronos Fox: удаление Tail01–03, Undo/Redo, VERIFIED GLB, download/reimport; material/texture descriptors и SHA256 image bytes совпадают. На синтетическом skinned/morph GLB отдельно проверены weighted leaf, animated child chain, single root с frozen frame, полный static bake, Rest + все вершины в шести фазах каждого сохранившегося клипа.
+
+F02 контроль: 500 001 → Repair 500 000 → Undo 500 001 → Export/Reimport 500 000. Все три массива longtask пусты: в этом headless Edge прогоне не зарегистрировано задач ≥50 мс; бюджет 100 мс выполнен. Это не нулевая длительность и не новый native before/after benchmark. Бюджет для arbitrary Rig deletion/static bake на больших моделях здесь не сертифицирован.
+
+Скриншоты финального предупреждения/toolbar/Fox и экспортированные GLB находятся в `evidence/final-proof`, полные regression/performance артефакты — в `evidence/production-proof`. Первоначальные RED результаты сохранены отдельно. В дополнительном UI прогоне найдено слишком раннее чтение viewer probe до публикации импортированной Fox в интерфейсе; добавлено ожидание реального имени загруженного asset. Финальные 26 тестов проходят без retry, продуктовый код ради этого не изменялся.
+
+## Ограничения
+
+1. Отказ для malformed/unreadable исходных весов, дополнительных наборов влияний, compressed joint rewrites/static bake, конфликтующих shared source meshes и Bone с собственным node-level mesh/camera payload выполняется до удаления. Это технические ограничения сохранности, не запрет weighted/animated/root joints. Для текущего удаления требуется Hybrid и отсутствие несохранённого Heal patch; сначала сохранить/reimport проверенный ремонт.
+2. Неиспользуемые исходные узлы/skins остаются в raw GLB для стабильных indices и неизвестных авторских ссылок; в активный скелет после reimport они не возвращаются. **Обычный repaired export после reimport может отказаться из-за unreachable source records по F01.** Правило F01 не ослаблено. Для этого последующего сценария нужен отдельный source-aware reachability/export контракт; текущий edited Rig GLB проверяется собственным строгим verifier.
+3. Peak RAM/GPU VRAM и полный lifecycle disposal не измерялись в этом проходе; F06/F07 остаются открытыми. Native desktop запуск, clean-machine install, иные DPI/GPU не заявляются PASS.
+
+## Что проверить владельцу
+
+1. На своей ширине окна открыть Rig → Редактировать: панель занимает только место контролов; справа от неё можно вращать/панорамировать сцену. Ground selector один.
+2. Выбрать начало лишнего пальца: **Удалить цепочку**. Проверить список последствий, сначала нажать Отмена — модель не меняется. Затем подтвердить — исчезают соответствующие суставы, а геометрия пальца остаётся.
+3. Ctrl+Z / Redo должны возвращать/повторять ровно одну операцию с теми же точками, весами и клипами. Проверить обычное «Удалить сустав» в середине ветви: дети остаются.
+4. Проверить остальные анимации, материалы и текстуры. После **Проверить изменённый GLB → VERIFIED → Сохранить → открыть сохранённый GLB** удалённые суставы не должны возвращаться; сохранившиеся клипы работают.
+5. На копии RemovalSample.glb проверить root chain: предупреждение о static mesh, сохранённый morph clip, Undo восстанавливает скелет. Не применять root-chain ко всей рабочей модели ради одного пальца.
+
+Новый EXE/NSIS собран для ручной проверки; установщик не применялся, desktop не перехватывался. Следующий согласованный функциональный этап — отдельный PASS 7 Rig Fitting. Состояние всего F01–F09 и рекомендации — [сводный отчёт](ROADMAP_STATUS_2026_10_14.md).

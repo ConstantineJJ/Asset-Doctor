@@ -35,12 +35,13 @@ async function exportAndReopen(page:Page) {
 test('RMB Add and Delete are real structural edits with exact keyboard Undo and verified reimport',async({page})=>{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));await open(page);const original=await rigViewerState(page);
   await clickJoint(page,'Root',true);await expect(page.getByRole('menu',{name:'Joint actions'})).toBeVisible();
-  await expect(page.getByRole('menuitem',{name:'Delete joint',exact:true})).toBeDisabled();await expect(page.getByTestId('joint-menu-reason')).toContainText('Root');
+  await expect(page.getByRole('menuitem',{name:'Delete joint',exact:true})).toBeEnabled();await page.getByRole('menuitem',{name:'Delete joint',exact:true}).click();await expect(page.getByTestId('rig-removal-dialog')).toBeVisible();await page.getByTestId('rig-removal-cancel').click();
+  await clickJoint(page,'Root',true);
   await page.getByRole('menuitem',{name:'Add child joint',exact:true}).click();await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(5);
   const added=(await rigViewerState(page)).bones.find(bone=>bone.name==='Joint_1')!;expect(added).toBeTruthy();
   await page.keyboard.press('Control+z');await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(4);
   await page.getByRole('button',{name:'Redo',exact:true}).click();expect((await rigViewerState(page)).bones.find(bone=>bone.name==='Joint_1')!.uuid).toBe(added.uuid);
-  await clickJoint(page,'Joint_1',true);await page.getByRole('menuitem',{name:'Delete joint',exact:true}).click();await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(4);
+  await clickJoint(page,'Joint_1',true);await page.getByRole('menuitem',{name:'Delete joint',exact:true}).click();await expect(page.getByTestId('rig-removal-dialog')).toBeVisible();await page.getByTestId('rig-removal-confirm').click();await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(4);
   await page.keyboard.press('Control+z');await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(5);
   await exportAndReopen(page);const reopened=await rigViewerState(page);expect(reopened.bones.map(bone=>bone.name)).toContain('Joint_1');expect(reopened.durations).toEqual(original.durations);expect(errors).toEqual([]);
 });
@@ -50,7 +51,7 @@ test('Safe source-leaf deletion preserves animation, supports history in Smooth,
   const leaf=await clickJoint(page,'Side');await expect(page.getByRole('button',{name:'Delete Joint',exact:true})).toBeEnabled();
   await page.getByLabel('Shading mode').selectOption('smooth');await page.getByRole('button',{name:'Delete Joint',exact:true}).click();
   await expect(page.getByRole('alert').first()).toContainText('Hybrid');expect((await rigViewerState(page)).bones).toHaveLength(4);
-  await page.getByLabel('Shading mode').selectOption('hybrid');await page.getByRole('button',{name:'Delete Joint',exact:true}).click();await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(3);
+  await page.getByLabel('Shading mode').selectOption('hybrid');await page.getByRole('button',{name:'Delete Joint',exact:true}).click();await expect(page.getByTestId('rig-removal-dialog')).toBeVisible();await page.getByTestId('rig-removal-confirm').click();await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(3);
   await page.getByLabel('Shading mode').selectOption('smooth');await page.keyboard.press('Control+z');await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(4);
   expect((await rigViewerState(page)).bones.find(bone=>bone.name==='Side')!.uuid).toBe(leaf.uuid);
   await page.getByRole('button',{name:'Redo',exact:true}).click();await expect.poll(async()=>(await rigViewerState(page)).jointCount).toBe(3);

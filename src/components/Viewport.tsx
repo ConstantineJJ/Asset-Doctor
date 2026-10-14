@@ -257,9 +257,9 @@ export const Viewport: React.FC<ViewportProps> = ({
       )}
 
       {/* Model presentation is separate from bottom animation transport. */}
-      <div className="absolute top-14 left-3 right-3 z-20 flex flex-col items-start gap-3 max-h-[65%] overflow-y-auto custom-scrollbar">
+      <div className="absolute top-14 left-3 z-20 flex flex-col items-start gap-3 w-fit max-w-[calc(100%-1.5rem)] max-h-[65%] overflow-y-auto custom-scrollbar pointer-events-none">
       {fileName && !compareOpen && onSetModelRotation && (
-        <div data-testid="model-rotation-controls" className="flex flex-wrap max-w-full items-center gap-2 bg-[#181a20]/95 border border-[#58626e] px-2 py-1.5 rounded text-xs text-gray-200 shrink-0">
+        <div data-testid="model-rotation-controls" className="flex flex-wrap max-w-full items-center gap-2 bg-[#181a20]/95 border border-[#58626e] px-2 py-1.5 rounded text-xs text-gray-200 shrink-0 pointer-events-auto">
           {/* Turntable Auto-Rotate Play/Pause */}
           {onToggleAutoRotate && (
             <button
@@ -348,7 +348,7 @@ export const Viewport: React.FC<ViewportProps> = ({
           )}
         </div>
       )}
-      {!compareOpen&&rigToolbar&&<div className="w-full">{rigToolbar}</div>}
+      {!compareOpen&&rigToolbar&&<div className="w-fit max-w-full pointer-events-auto">{rigToolbar}</div>}
       </div>
 
       {/* Bottom Left: Mouse control tips */}
