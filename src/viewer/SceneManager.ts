@@ -11,6 +11,7 @@ import { createPresentationWrapper, documentToViewer } from './AssetPresentation
 import { RigEditSession, type RigMode } from '../rig/RigEditSession';
 import { RigGizmo, type RigGizmoSettings } from '../rig/RigGizmo';
 import { capturePreviewPose } from '../rig/PosePreview';
+import type {FitProposal} from '../rig/RigFitting';
 
 export interface SceneManagerCallbacks {
   onMeshSelected?: (uuid: string | null) => void;
@@ -49,6 +50,7 @@ export class SceneManager {
   private rigSettings:RigGizmoSettings={tool:'translate',space:'local',target:'joint',childPolicy:'follow'};
   private activeClipIndex=0;
   private rigInteractionBlocked=false;
+  private fittingPreview:THREE.Group|null=null;
 
   // Model Rotation & Turntable
   private modelRotationY: number = 0;
@@ -1698,6 +1700,21 @@ export class SceneManager {
     this.rigSettings=settings;this.rigGizmo.configure(this.rigSession,this.selectedMeshUuid,settings);this.rigGizmo.controls.enabled=!this.rigInteractionBlocked;
   }
   public setRigInteractionBlocked(blocked:boolean) {this.rigInteractionBlocked=blocked;this.rigGizmo.controls.enabled=!blocked;}
+  /** Information overlay belongs to the presentation wrapper, never to the GLB root. */
+  public setRigFittingPreview(proposals:FitProposal[]) {
+    if(this.fittingPreview) {
+      for(const child of this.fittingPreview.children){const object=child as THREE.Points;object.geometry.dispose();(object.material as THREE.Material).dispose();}
+      this.fittingPreview.removeFromParent();this.fittingPreview=null;
+    }
+    if(!this.presentationWrapper||!proposals.length)return;
+    const group=new THREE.Group();group.name='__ascope_internal_rig_fitting';
+    const points=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(proposals.flatMap(proposal=>proposal.target),3));
+    const lines=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(proposals.flatMap(proposal=>[...proposal.current,...proposal.target]),3));
+    const markers=new THREE.Points(points,new THREE.PointsMaterial({color:0x8dcfff,size:12,sizeAttenuation:false,depthTest:false,depthWrite:false}));
+    const links=new THREE.LineSegments(lines,new THREE.LineBasicMaterial({color:0x8dcfff,depthTest:false,depthWrite:false,transparent:true,opacity:.7}));
+    for(const object of [markers,links]){object.frustumCulled=false;object.renderOrder=1001;group.add(object);}
+    this.presentationWrapper.add(group);this.fittingPreview=group;
+  }
 
   public toggleOrigin(visible?: boolean) {
     this.isOriginVisible = visible !== undefined ? visible : !this.isOriginVisible;
@@ -1826,6 +1843,7 @@ export class SceneManager {
   }
 
   public disposeCurrentAsset() {
+    this.setRigFittingPreview([]);
     this.rigGizmo?.configure(null,null,this.rigSettings);
     this.rigSession?.dispose();this.rigSession=null;
     this.clearIssueLocalization();

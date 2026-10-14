@@ -5,6 +5,7 @@ import { runRigExportTests } from '../src/rig/RigExportTests';
 import { runRigVerificationTests } from '../src/rig/RigVerificationTests';
 import { runRigStructureTests } from '../src/rig/RigStructureTests';
 import { runRigRemovalTests } from '../src/rig/RigRemovalTests';
+import {runRigFittingTests} from '../src/rig/RigFittingTests';
 import { runFileIOTests } from '../src/platform/FileIOTests';
 import { runDiagnosticCoreTests } from '../src/analysis/DiagnosticCoreTests';
 import { runDiagnosticCoverageTests } from '../src/analysis/DiagnosticCoverageTests';
@@ -29,6 +30,7 @@ async function main() {
     ...(await runRigVerificationTests()),
     ...(await runRigStructureTests()),
     ...(await runRigRemovalTests()),
+    ...(await runRigFittingTests()),
     ...(await runFileIOTests()),
     ...runSyntheticTopologyTests(),
     ...runDiagnosticCoreTests(),

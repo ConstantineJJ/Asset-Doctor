@@ -80,6 +80,10 @@ export class RigEditSession {
   getRest(uuid:string) { const rest=this.authored.nodes.get(uuid); return rest && structuredClone(rest); }
   getTerminalTip(uuid:string) { return this.authored.tips.get(uuid)?.slice(); }
   snapshot():RigSnapshot { return this.captureSnapshot(this.authored); }
+  /** Read-only computation needs rest, not copies of every animation stream/history. */
+  fittingRest() {
+    return {objects:new Map(this.authored.objects),children:new Map([...this.authored.children].map(([id,children])=>[id,children.slice()])),joints:new Map([...this.authored.joints].map(([skin,joints])=>[skin,joints.slice()])),nodes:new Map([...this.authored.nodes].map(([id,rest])=>[id,structuredClone(rest)])),skins:new Map([...this.authored.skins].map(([skin,values])=>[skin,values.map(matrix=>matrix.slice())])),morphs:new Map([...this.authored.morphs].map(([id,values])=>[id,values.slice()]))};
+  }
   originalSnapshot():RigSnapshot {return this.captureSnapshot(this.baseline);}
   /** Export identities are compiled separately from immutable importer associations. */
   exportNodeIndices():Map<string,number> {
@@ -432,6 +436,38 @@ export class RigEditSession {
     }
     if(!child || child.parent!==joint || child.position.length()<1e-8) throw new Error('Select a direct child joint with a valid direction.');
     this.commitJoint(child.uuid,{position:child.position.clone().normalize().multiplyScalar(length).toArray()},childPolicy);
+  }
+  /** Set accepted document positions simultaneously, keeping unselected joints in place. */
+  applyFittingPositions(positions:{uuid:string;position:number[]}[]) {
+    this.editableStructure();if(!positions.length)throw new Error('Select at least one fitting proposal.');
+    const targets=new Map<string,THREE.Vector3>();
+    for(const change of positions) {
+      assertFinite(change.position,3);
+      if(targets.has(change.uuid)||!(this.authored.objects.get(change.uuid) instanceof THREE.Bone))throw new Error('Fitting target is duplicate or no longer an active joint.');
+      targets.set(change.uuid,new THREE.Vector3().fromArray(change.position));
+    }
+    this.transaction(()=>{
+      const bones=[...this.authored.objects.values()].filter((node):node is THREE.Bone=>node instanceof THREE.Bone);
+      const oldWorld=new Map(bones.map(bone=>[bone.uuid,documentMatrix(bone)])),changes=new Map();
+      const visit=(node:THREE.Object3D,parent:THREE.Matrix4)=>{
+        if(node instanceof THREE.Bone) {
+          invertible(parent);
+          const old=this.authored.nodes.get(node.uuid)!,desired=targets.get(node.uuid)??new THREE.Vector3().setFromMatrixPosition(oldWorld.get(node.uuid)!);
+          const position=desired.clone().applyMatrix4(parent.clone().invert());
+          if(!equalArray(old.position,position.toArray())) {
+            node.position.copy(position);changes.set(node.uuid,{oldPosition:new THREE.Vector3().fromArray(old.position),newPosition:position,rotation:new THREE.Quaternion()});
+          }
+        }
+        node.updateMatrix();const matrix=parent.clone().multiply(node.matrix);invertible(matrix);
+        for(const child of node.children)visit(child,matrix);
+      };
+      visit(this.root,new THREE.Matrix4());this.root.updateWorldMatrix(true,true);this.root.updateMatrixWorld(true);
+      if(!changes.size)return;
+      for(const skin of this.skeletons)skin.boneInverses=skin.bones.map((bone,i)=>{
+        const world=documentMatrix(bone);invertible(world);return world.invert().multiply(oldWorld.get(bone.uuid)!).multiply(skin.boneInverses[i]);
+      });
+      this.authored={...this.authored,clips:rebaseClips(this.root,this.authored.clips,changes)};
+    });
   }
   setTerminalTip(uuid:string,point:number[]) {
     assertFinite(point,3);

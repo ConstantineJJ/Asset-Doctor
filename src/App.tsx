@@ -8,6 +8,8 @@ import { AnimationTimeline } from './components/AnimationTimeline';
 import { RigEditorPanel } from './components/RigEditorPanel';
 import {RigJointMenu} from './components/RigJointMenu';
 import {RigRemovalDialog} from './components/RigRemovalDialog';
+import {RigFittingPanel} from './components/RigFittingPanel';
+import {RigFittingService,type FittingReview} from './rig/RigFittingService';
 import type {RemovalScope,RemovalSummary} from './rig/RigRemoval';
 import {jointDeleteMessage} from './rig/RigMessages';
 import type { RigEditSession,RigMode } from './rig/RigEditSession';
@@ -110,6 +112,17 @@ export function App() {
   const [pendingRigRemoval,setPendingRigRemoval]=useState<RemovalRequest|null>(null);
   const pendingRigRemovalRef=useRef<RemovalRequest|null>(null);
   const cancelRigRemoval=useCallback(()=>{pendingRigRemovalRef.current=null;setPendingRigRemoval(null);},[]);
+  const rigFittingServiceRef=useRef<RigFittingService|null>(null);
+  if(!rigFittingServiceRef.current)rigFittingServiceRef.current=new RigFittingService();
+  const [fittingReview,setFittingReview]=useState<FittingReview|null>(null),fittingReviewRef=useRef<FittingReview|null>(null);
+  const [fittingSelection,setFittingSelection]=useState<Set<string>>(new Set());
+  const [fittingBusy,setFittingBusy]=useState(false),fittingBusyRef=useRef(false),fittingRequestRef=useRef(0);
+  const [fittingError,setFittingError]=useState<string|null>(null);
+  const discardFitting=useCallback(()=>{
+    fittingRequestRef.current++;rigFittingServiceRef.current?.cancel();fittingBusyRef.current=false;setFittingBusy(false);
+    fittingReviewRef.current=null;setFittingReview(null);setFittingSelection(new Set());setFittingError(null);sceneManagerRef.current?.setRigFittingPreview([]);
+  },[]);
+  useEffect(()=>()=>rigFittingServiceRef.current?.cancel(),[]);
   const [savedExport, setSavedExport] = useState<RepairedExportResult | null>(null);
   if (!healEngineRef.current) {
     healEngineRef.current = new SurgicalHealEngine();
@@ -513,6 +526,7 @@ export function App() {
       setHealPreview(null);
       setHealUndoState({ available: false });
       setFileName(assetName);
+      discardFitting();
       setFileSizeBytes(sizeBytes);
       setExplodedAmount(0);
       setSelectedUuid(null);
@@ -550,7 +564,7 @@ export function App() {
       // Trigger progressive background analysis
       await runAnalysisPipeline(root, clips, assetName, sizeBytes);
     },
-    [runAnalysisPipeline]
+    [runAnalysisPipeline,discardFitting]
   );
 
   // Mount an empty viewport. Built-in specimens remain available from Examples.
@@ -559,6 +573,7 @@ export function App() {
     if(!session || !root) return;
     setTreeRoot(buildSceneTree(root));setRigVersion(value=>value+1);
     if(rigPublishedRevisionRef.current===session.revision)return;
+    discardFitting();
     rigPublishedRevisionRef.current=session.revision;
     if(rigUndoingRef.current)removeUndoDomain('rig');else undoOrderRef.current.push('rig');
     currentAnimationClipsRef.current=session.clips;
@@ -569,14 +584,14 @@ export function App() {
     setAnimationClips(analyzeAnimations(session.clips,analyzeSkeleton(root).rootBoneNames));
     setActiveClipIndex(index=>Math.min(index,Math.max(0,session.clips.length-1)));
     void runAnalysisPipeline(root,session.clips,assetDetailsRef.current.name,assetDetailsRef.current.size);
-  },[runAnalysisPipeline]);
+  },[runAnalysisPipeline,discardFitting]);
   const handleCanvasMount = useCallback(
     (container: HTMLElement) => {
       if (!sceneManagerRef.current) {
         const mgr = new SceneManager(container, {
           onRigChanged:publishRigChange,
           onRigError:setRigError,
-          onRigDrag:setRigDragging,
+          onRigDrag:(active)=>{setRigDragging(active);if(active)discardFitting();},
           onRigContextMenu:setRigContext,
           onMeshSelected: (uuid) => {
             setSelectedUuid(uuid);
@@ -895,6 +910,7 @@ export function App() {
   const publishHealReport = (engine: SurgicalHealEngine) => {
     const report = engine.getLastOperation();
     if (!report) return;
+    discardFitting();
     setHealReport(report);
     setSavedHealReport(report);
     setHealHistorical(false);
@@ -907,6 +923,7 @@ export function App() {
   };
 
   const performHeal = async (undo: boolean): Promise<HealOperationReport | null> => {
+    if(fittingBusyRef.current)return null;
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
     if (!root || !engine || healBusyRef.current) return null;
@@ -1039,6 +1056,7 @@ export function App() {
       !root ||
       !engine ||
       healBusyRef.current ||
+      fittingBusyRef.current ||
       repairQueueConfirmingRef.current ||
       repairQueueRunningRef.current ||
       repairQueueState.status === 'running'
@@ -1243,7 +1261,7 @@ export function App() {
 
   const handleRigExport=async(save:boolean):Promise<boolean>=>{
     const session=rigSessionRef.current,source=currentExportSourceRef.current,root=currentAssetRootRef.current;
-    if(!session || !root || source?.kind!=='buffer' || exportBusyRef.current || healBusyRef.current || repairQueueRunningRef.current || rigDragging)return false;
+    if(!session || !root || source?.kind!=='buffer' || exportBusyRef.current || healBusyRef.current || repairQueueRunningRef.current || rigDragging||fittingBusyRef.current)return false;
     exportBusyRef.current=true;setExportBusy(true);setRigError(null);
     const request=++exportRequestRef.current,revision=session.revision;
     const current=()=>request===exportRequestRef.current && root===currentAssetRootRef.current && session===rigSessionRef.current && session.revision===revision;
@@ -1281,7 +1299,8 @@ export function App() {
     (!savedRigExport || savedRigExport!==rigExportResultRef.current)
   );
   unsavedRepairsRef.current = hasUnsavedRepairs;
-  useEffect(()=>{sceneManagerRef.current?.setRigInteractionBlocked(healBusy||exportBusy||repairQueueState.status==='running'||Boolean(pendingRigRemoval));},[healBusy,exportBusy,repairQueueState.status,pendingRigRemoval]);
+  useEffect(()=>{sceneManagerRef.current?.setRigInteractionBlocked(healBusy||exportBusy||fittingBusy||repairQueueState.status==='running'||Boolean(pendingRigRemoval));},[healBusy,exportBusy,fittingBusy,repairQueueState.status,pendingRigRemoval]);
+  useEffect(()=>{sceneManagerRef.current?.setRigFittingPreview(fittingReview?.proposals.filter(proposal=>proposal.status==='suggested'&&(!fittingSelection.size||fittingSelection.has(proposal.uuid)))??[]);},[fittingReview,fittingSelection]);
 
   const runAssetSwitch = async (pending: PendingAssetSwitch) => {
     if (pending.kind === 'file') await openFileNow(pending.file);
@@ -1425,14 +1444,36 @@ export function App() {
 
   const handleRigAction=(action:(session:RigEditSession)=>void,undo=false)=>{
     const session=rigSessionRef.current;
-    if(!session||pendingRigRemovalRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    if(!session||pendingRigRemovalRef.current||fittingBusyRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
     setRigContext(null);setRigError(null);sceneManagerRef.current?.detachRigMixer();rigUndoingRef.current=undo;
     try {action(session);sceneManagerRef.current?.refreshRigStructure();sceneManagerRef.current?.syncRigClips();publishRigChange();}
     catch(error){sceneManagerRef.current?.syncRigClips();setRigError(jointDeleteMessage(error instanceof Error?error.message:String(error),language));}
     finally {rigUndoingRef.current=false;}
   };
   const handleUndoRig=()=>handleRigAction(session=>session.undo(),true);
+  const handleAnalyzeFitting=async()=>{
+    const session=rigSessionRef.current,root=currentAssetRootRef.current,manager=sceneManagerRef.current;
+    if(!session||!root||!manager||fittingBusyRef.current||pendingRigRemovalRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    if(currentExportSourceRef.current?.kind!=='buffer'||!/\.glb$/i.test(fileName)){setFittingError(language==='ru'?'Откройте самодостаточный GLB.':'Open a self-contained GLB.');return;}
+    if(healEngineRef.current?.getActiveReports().length){setFittingError(language==='ru'?'Сначала сохраните и заново откройте проверенный ремонт.':'Save and reimport verified repairs before fitting.');return;}
+    discardFitting();const request=++fittingRequestRef.current;fittingBusyRef.current=true;setFittingBusy(true);
+    try {
+      const review=await rigFittingServiceRef.current!.analyze(session,mesh=>manager.renderModeManager.authoredGeometry(mesh));
+      if(request!==fittingRequestRef.current||session!==rigSessionRef.current||root!==currentAssetRootRef.current)return;
+      fittingReviewRef.current=review;setFittingReview(review);
+    }catch(error){if(request===fittingRequestRef.current)setFittingError(error instanceof Error?error.message:String(error));}
+    finally{if(request===fittingRequestRef.current){fittingBusyRef.current=false;setFittingBusy(false);}}
+  };
+  const handleApplyFitting=()=>{
+    const review=fittingReviewRef.current;
+    if(!review||!review.stillCurrent()){discardFitting();setFittingError(language==='ru'?'Предложения устарели. Выполните анализ снова.':'Proposals are stale. Analyze again.');return;}
+    const positions=review.proposals.filter(proposal=>proposal.status==='suggested'&&fittingSelection.has(proposal.uuid)).map(proposal=>({uuid:proposal.uuid,position:proposal.target}));
+    if(!positions.length)return;
+    handleRigAction(session=>session.applyFittingPositions(positions));
+  };
   const handleRigMode=(mode:RigMode)=>{
+    if(fittingBusyRef.current)return;
+    discardFitting();
     setRigError(null);setRigContext(null);
     try {
       const source=currentExportSourceRef.current,session=rigSessionRef.current;
@@ -1452,7 +1493,7 @@ export function App() {
   };
   const handleDeleteJoint=(uuid=selectedUuid,scope:RemovalScope='joint')=>{
     setRigContext(null);const session=rigSessionRef.current,root=currentAssetRootRef.current;
-    if(!uuid||!session||!root||pendingRigRemovalRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    if(!uuid||!session||!root||pendingRigRemovalRef.current||fittingBusyRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
     try {
       validateRemovalContext();
       if(session.mode!=='edit')throw new Error('Enter Edit Skeleton before changing joints.');
@@ -1509,7 +1550,7 @@ export function App() {
     if(healEngineRef.current?.getActiveReports().length)return 'Export and reimport verified repairs before deleting a joint.';
     return null;
   },[selectedUuid,rigSessionRef.current,rigSessionRef.current?.revision,healReport]);
-  const rigBusy=healBusy||exportBusy||rigDragging||repairQueueState.status==='running'||Boolean(pendingRigRemoval);
+  const rigBusy=healBusy||exportBusy||fittingBusy||rigDragging||repairQueueState.status==='running'||Boolean(pendingRigRemoval);
   const rigEditorProps={session:rigSessionRef.current,selectedUuid,settings:rigSettings,activeClipIndex,busy:rigBusy,enabled:currentExportSourceRef.current?.kind==='buffer'&&/\.glb$/i.test(fileName),error:rigError,exportResult:rigExportResult,
     onVerifyExport:()=>void handleRigExport(false),onSaveExport:()=>void handleRigExport(true),onMode:handleRigMode,onAction:handleRigAction,onUndo:handleUndoRig,
     onAddJoint:()=>handleAddJoint(),onDeleteJoint:()=>handleDeleteJoint(),onDeleteChain:()=>handleDeleteJoint(selectedUuid,'chain'),deleteReason:jointDeleteMessage(selectedDeleteReason,language),
@@ -1527,7 +1568,7 @@ export function App() {
         onPickFile={isDesktop() ? handlePickFile : undefined}
         onOpenFile={requestOpenFile}
         onExport={handleToolbarExport}
-        canExport={canExportRepaired || Boolean(rigSessionRef.current?.hasEdits&&!rigDragging&&!healBusy&&repairQueueState.status!=='running')}
+        canExport={!fittingBusy&&(canExportRepaired || Boolean(rigSessionRef.current?.hasEdits&&!rigDragging&&!healBusy&&repairQueueState.status!=='running'))}
         exportBusy={exportBusy}
         onSelectSample={requestSelectSample}
         renderMode={renderMode}
@@ -1594,7 +1635,7 @@ export function App() {
         {/* Right: Technical Inspector & Diagnostic Panel */}
         <InspectorPanel
           animationClips={animationClips} activeClipIndex={activeClipIndex} onSelectClip={handleSelectClip} animationBusy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} clipSourceKey={rigSessionRef.current?.root.uuid??fileName}
-          rigEditor={<RigEditorPanel {...rigEditorProps} />}
+          rigEditor={<>{rigSessionRef.current?.hasSkeleton&&<RigFittingPanel review={fittingReview} selected={fittingSelection} activeUuid={selectedUuid} busy={fittingBusy} blocked={!rigEditorProps.enabled||healBusy||exportBusy||rigDragging||Boolean(pendingRigRemoval)||repairQueueState.status==='running'} edit={rigSessionRef.current?.mode==='edit'} error={fittingError} onAnalyze={()=>void handleAnalyzeFitting()} onCancel={discardFitting} onApply={handleApplyFitting} onPick={uuid=>sceneManagerRef.current?.selectObject(uuid)} onToggle={(uuid,checked)=>setFittingSelection(previous=>{const next=new Set(previous);if(checked)next.add(uuid);else next.delete(uuid);return next;})}/>}<RigEditorPanel {...rigEditorProps} /></>}
           summary={summary}
           healthIssues={healthIssues}
           progressiveState={progressiveState}
@@ -1620,7 +1661,7 @@ export function App() {
           healUndoState={healUndoState}
           healReport={healReport}
           healHistorical={healHistorical}
-          healBusy={healBusy}
+          healBusy={healBusy||fittingBusy}
           healError={healError}
           healStorageFailed={healStorageFailed}
           savedHealHistoryAvailable={Boolean(savedHealReport)}

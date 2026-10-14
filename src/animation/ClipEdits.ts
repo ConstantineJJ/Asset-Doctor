@@ -46,6 +46,8 @@ export function rebaseClips(root: THREE.Object3D, clips: THREE.AnimationClip[], 
     const cubic=isGltfCubic(track), property=path.propertyName;
     if(!['position','quaternion','scale','morphTargetInfluences'].includes(property)) throw new Error('Unsupported animation channel on edited joint.');
     if(property!=='position' && property!=='quaternion') continue;
+    // A translation-only rest edit must not rewrite authored rotation samples.
+    if(property==='quaternion'&&Math.abs(delta.rotation.x)+Math.abs(delta.rotation.y)+Math.abs(delta.rotation.z)<1e-12&&Math.abs(delta.rotation.w-1)<1e-12)continue;
     const size=property==='position'?3:4;
     if(track.values.length !== track.times.length*size*(cubic?3:1)) throw new Error('Unexpected animation sample layout.');
     for(let i=0;i<track.values.length;i+=size) {
