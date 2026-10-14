@@ -1,13 +1,16 @@
 import * as THREE from 'three';
+import {retainModelResources,disposeModelResources} from '../loaders/ModelResources';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { copyAuthoredMaterials } from '../viewer/AuthoredMaterialState';
 import { copySourceMetadata } from '../loaders/AssetRuntimeMetadata';
 
 /** Geometry/textures are borrowed; materials, bones and skeletons belong to the clone. */
 export function cloneForCompare(source: THREE.Group, animations: THREE.AnimationClip[]) {
+  retainModelResources(source);
   const root=cloneSkeleton(source) as THREE.Group;
   copyAuthoredMaterials(source,root);
   copySourceMetadata(source,root);
+  retainModelResources(root);
   const originals:THREE.Object3D[]=[],clones:THREE.Object3D[]=[];
   source.traverse(node=>originals.push(node));root.traverse(node=>clones.push(node));
   const uuids=new Map(originals.map((node,i)=>[node.uuid,clones[i].uuid]));
@@ -30,13 +33,5 @@ export function cloneForCompare(source: THREE.Group, animations: THREE.Animation
 }
 
 export function disposeCompareClone(root: THREE.Object3D) {
-  const materials=new Set<THREE.Material>(),skeletons=new Set<THREE.Skeleton>();
-  root.traverse(object=>{
-    const mesh=object as THREE.SkinnedMesh;
-    if(!mesh.isMesh) return;
-    (Array.isArray(mesh.material)?mesh.material:[mesh.material]).forEach(material=>materials.add(material));
-    if(mesh.isSkinnedMesh) skeletons.add(mesh.skeleton);
-  });
-  materials.forEach(material=>material.dispose());skeletons.forEach(skeleton=>skeleton.dispose());
-  // Never dispose borrowed geometry, textures or ImageBitmaps here.
+  disposeModelResources(root);
 }

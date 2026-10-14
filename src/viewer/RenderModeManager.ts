@@ -417,10 +417,12 @@ export class RenderModeManager {
   public resetAll(root: THREE.Object3D) {
     this.disposeRootShading(root);
     this.restoreOriginals(root);
+    root.traverse(object=>{if((object as THREE.Mesh).isMesh)this.originalMaterials.delete(object as THREE.Mesh);});
     this.appliedRoots.delete(root);
     // Do not dispose shared Lineup presentation state until all roots have been
     // restored or the manager itself is disposed.
     if (this.appliedRoots.size === 0) {
+      this.originalMaterials.clear();
       this.clearPresentationMaterials();
       this.currentMode = 'pbr';
     }

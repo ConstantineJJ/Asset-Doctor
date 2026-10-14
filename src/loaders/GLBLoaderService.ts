@@ -11,7 +11,7 @@ import {
 import { auditGltfSource, type GltfSourceAudit } from './GltfSourceAudit';
 import { captureAuthoredMaterials } from '../viewer/AuthoredMaterialState';
 import { captureSourceMetadata } from './AssetRuntimeMetadata';
-import { disposeModelResources } from './ModelResources';
+import { disposeModelResources,retainModelResources } from './ModelResources';
 
 export interface LoadedModelResult {
   fileName: string;
@@ -152,6 +152,7 @@ export class GLBLoaderService {
         (gltf) => {
           if (this.activeResourceErrors.length > 0) {
             sourceAudit.resourceErrors = [...this.activeResourceErrors];
+            retainModelResources(gltf.scene,gltf.scenes);
             disposeModelResources(gltf.scene);
             reject(new Error(`Model resources failed to load: ${this.activeResourceErrors.join(', ')}`));
             return;
@@ -163,6 +164,7 @@ export class GLBLoaderService {
           // viewport-only visibility/culling/presentation adjustments.
           captureSourceMetadata(root,sourceAudit,gltf.parser.json,gltf.parser.associations);
           captureAuthoredMaterials(root);
+          retainModelResources(root,gltf.scenes);
           sourceAudit.resourceErrors = [...this.activeResourceErrors];
 
           resolve({
@@ -188,6 +190,7 @@ export class GLBLoaderService {
         url,
         (gltf) => {
           if (this.activeResourceErrors.length > 0) {
+            retainModelResources(gltf.scene,gltf.scenes);
             disposeModelResources(gltf.scene);
             reject(new Error(`Model resources failed to load: ${this.activeResourceErrors.join(', ')}`));
             return;
@@ -196,6 +199,7 @@ export class GLBLoaderService {
           const root = gltf.scene || new THREE.Group();
           captureSourceMetadata(root,undefined,gltf.parser.json,gltf.parser.associations);
           captureAuthoredMaterials(root);
+          retainModelResources(root,gltf.scenes);
           resolve({
             fileName: name,
             root,

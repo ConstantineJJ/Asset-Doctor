@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import {retainModelResources,disposeModelResources} from '../loaders/ModelResources';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BoundsCalculator } from './BoundsCalculator';
 import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
 import { SurfaceManager } from './SurfaceManager';
+import {SceneRenderResources} from './SceneRenderResources';
 import { computeCompareLayout } from '../compare/CompareLayout';
 import { cloneForCompare, disposeCompareClone } from '../compare/CompareClone';
 import { createPresentationWrapper, documentBounds } from './AssetPresentation';
@@ -36,6 +38,7 @@ interface SlotRuntime {
   lightingManager: LightingManager;
   renderModeManager: RenderModeManager;
   surfaceManager: SurfaceManager;
+  renderResources:SceneRenderResources;
 }
 
 interface LineupRootRuntime {
@@ -60,6 +63,7 @@ interface LineupRuntime {
   lightingManager: LightingManager;
   renderModeManager: RenderModeManager;
   surfaceManager: SurfaceManager;
+  renderResources:SceneRenderResources;
   /** Current analytically maintained lineup bounds; avoids expandByObject on UI input. */
   bounds: THREE.Box3;
 }
@@ -283,6 +287,7 @@ export class CompareSceneManager {
     if (isSameIds) {
       const orderMap = new Map(assets.map((a, i) => [a.id, i]));
       this.assets = assets.slice(0, 8);
+      for(const asset of this.assets)retainModelResources(asset.root);
       if (this.viewMode === 'lineup' && this.lineup && this.lineup.roots.length === assets.length) {
         this.lineup.roots.sort((a, b) => (orderMap.get(a.asset.id) ?? 0) - (orderMap.get(b.asset.id) ?? 0));
         this.updateLineupLayout(false, true);
@@ -299,6 +304,7 @@ export class CompareSceneManager {
     this.clearSlotRuntimes();
     this.clearLineup();
     this.assets = assets.slice(0, 8);
+    for(const asset of this.assets)retainModelResources(asset.root);
 
     if (this.viewMode === 'grid') {
       for (const asset of this.assets) {
@@ -485,6 +491,7 @@ export class CompareSceneManager {
     this.assets = [];
     this.manualScales.clear();
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
   }
 
@@ -540,6 +547,7 @@ export class CompareSceneManager {
     const surfaceManager = new SurfaceManager(scene);
     surfaceManager.setSurface(this.currentSurface);
     const renderModeManager = new RenderModeManager(scene);
+    const renderResources = new SceneRenderResources(scene);
     asset.root.traverse((object) => {
       if ((object as THREE.Mesh).isMesh) renderModeManager.registerMesh(object as THREE.Mesh);
     });
@@ -566,6 +574,7 @@ export class CompareSceneManager {
       lightingManager,
       renderModeManager,
       surfaceManager,
+      renderResources,
     };
     this.frameSlot(runtime);
     controls.addEventListener('change', () => this.handleCameraChanged(runtime));
@@ -676,6 +685,7 @@ export class CompareSceneManager {
     const surfaceManager = new SurfaceManager(scene);
     surfaceManager.setSurface(this.currentSurface);
     const renderModeManager = new RenderModeManager(scene);
+    const renderResources = new SceneRenderResources(scene);
     for (const entry of roots) {
       entry.root.traverse((object) => {
         if ((object as THREE.Mesh).isMesh) renderModeManager.registerMesh(object as THREE.Mesh);
@@ -697,6 +707,7 @@ export class CompareSceneManager {
       lightingManager,
       renderModeManager,
       surfaceManager,
+      renderResources,
       bounds: new THREE.Box3(),
     };
     this.updateLineupLayout(reframe, true);
@@ -793,7 +804,7 @@ export class CompareSceneManager {
     );
     for (const child of stale) {
       this.lineup.scene.remove(child);
-      if ((child as THREE.GridHelper).isGridHelper) {
+      if (child instanceof THREE.GridHelper) {
         (child as THREE.GridHelper).geometry.dispose();
         const material = (child as THREE.GridHelper).material;
         if (Array.isArray(material)) material.forEach((value) => value.dispose());
@@ -1110,6 +1121,7 @@ export class CompareSceneManager {
       slot.renderModeManager.dispose();
       slot.lightingManager.dispose();
       slot.surfaceManager.dispose();
+      slot.renderResources.dispose();
       slot.scene.remove(slot.presentation);
       slot.asset.root.removeFromParent();
       this.disposeSceneHelpers(slot.scene);
@@ -1132,13 +1144,14 @@ export class CompareSceneManager {
     lineup.renderModeManager.dispose();
     lineup.lightingManager.dispose();
     lineup.surfaceManager.dispose();
+    lineup.renderResources.dispose();
     this.disposeSceneHelpers(lineup.scene);
     this.lineup = null;
   }
 
   private disposeSceneHelpers(scene: THREE.Scene) {
     scene.traverse((object) => {
-      if ((object as THREE.GridHelper).isGridHelper) {
+      if (object instanceof THREE.GridHelper) {
         (object as THREE.GridHelper).geometry.dispose();
         const material = (object as THREE.GridHelper).material;
         if (Array.isArray(material)) material.forEach((value) => value.dispose());
@@ -1148,24 +1161,6 @@ export class CompareSceneManager {
   }
 
   private disposeAssetRoot(root: THREE.Object3D) {
-    const geometries = new Set<THREE.BufferGeometry>();
-    const materials = new Set<THREE.Material>();
-    const textures = new Set<THREE.Texture>();
-    root.traverse((object) => {
-      if (!(object as THREE.Mesh).isMesh) return;
-      const mesh = object as THREE.Mesh;
-      if (mesh.geometry) geometries.add(mesh.geometry);
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of mats) {
-        if (!material || materials.has(material)) continue;
-        materials.add(material);
-        for (const value of Object.values(material)) {
-          if (value && (value as THREE.Texture).isTexture) textures.add(value as THREE.Texture);
-        }
-      }
-    });
-    geometries.forEach((geometry) => geometry.dispose());
-    materials.forEach((material) => material.dispose());
-    textures.forEach((texture) => texture.dispose());
+    disposeModelResources(root);
   }
 }

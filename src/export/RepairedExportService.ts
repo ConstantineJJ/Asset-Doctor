@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {disposeModelResources} from '../loaders/ModelResources';
 import {ComputeWorkerClient} from '../workers/ComputeWorkerClient';
 import {packRoot} from '../workers/GeometryPacket';
 import {captureGeometry,geometryMatches} from '../heal/GeometrySnapshot';
@@ -668,34 +669,6 @@ export class RepairedExportService {
   }
 
   private disposeObject(root: THREE.Object3D) {
-    const textures = new Set<THREE.Texture>();
-    const materials = new Set<THREE.Material>();
-    const geometries = new Set<THREE.BufferGeometry>();
-
-    root.traverse((obj) => {
-      if (!(obj as THREE.Mesh).isMesh) return;
-      const mesh = obj as THREE.Mesh;
-      if (mesh.geometry) geometries.add(mesh.geometry);
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of mats) {
-        if (!material || materials.has(material)) continue;
-        materials.add(material);
-        const candidate = material as THREE.MeshStandardMaterial;
-        for (const texture of [
-          candidate.map,
-          candidate.normalMap,
-          candidate.roughnessMap,
-          candidate.metalnessMap,
-          candidate.aoMap,
-          candidate.emissiveMap,
-        ]) {
-          if (texture) textures.add(texture);
-        }
-      }
-    });
-
-    geometries.forEach((geometry) => geometry.dispose());
-    materials.forEach((material) => material.dispose());
-    textures.forEach((texture) => texture.dispose());
+    disposeModelResources(root);
   }
 }

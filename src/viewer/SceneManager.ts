@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import {retainModelResources,disposeModelResources} from '../loaders/ModelResources';
 import { CameraController } from './CameraController';
 import { ExplodedViewController } from './ExplodedViewController';
 import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
 import { SurfaceManager } from './SurfaceManager';
+import {SceneRenderResources} from './SceneRenderResources';
 import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
 import type { HealthIssue, LightingConfig, LightingPreset, RenderMode, SurfaceType } from '../types';
 import { measureRootMotion } from '../analysis/AnimationAnalyzer';
@@ -33,6 +35,7 @@ export class SceneManager {
   public lightingManager: LightingManager;
   public renderModeManager: RenderModeManager;
   public surfaceManager: SurfaceManager;
+  private renderResources:SceneRenderResources;
   public explodedViewController: ExplodedViewController;
 
   private container: HTMLElement;
@@ -145,6 +148,7 @@ export class SceneManager {
     this.cameraController = new CameraController(this.camera, this.renderer.domElement);
     this.lightingManager = new LightingManager(this.scene);
     this.surfaceManager = new SurfaceManager(this.scene);
+    this.renderResources = new SceneRenderResources(this.scene);
     this.renderModeManager = new RenderModeManager(this.scene);
     this.explodedViewController = new ExplodedViewController();
 
@@ -525,6 +529,7 @@ export class SceneManager {
     this.disposeCurrentAsset();
     this.clearIssueLocalization();
 
+    retainModelResources(assetRoot);
     this.currentAssetRoot = assetRoot;
     this.rigSession=new RigEditSession(assetRoot,clips,mesh=>this.renderModeManager.authoredGeometry(mesh),(mesh,geometry)=>this.renderModeManager.replaceAuthoredGeometry(assetRoot,mesh,geometry));
     this.presentationWrapper = createPresentationWrapper(assetRoot);
@@ -1923,34 +1928,16 @@ export class SceneManager {
     this.explodedViewController.reset();
     this.renderModeManager.resetAll(this.currentAssetRoot);
 
-    // Deep GPU resource disposal
-    this.currentAssetRoot.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        const mesh = obj as THREE.Mesh;
-        if (mesh.geometry) {
-          mesh.geometry.dispose();
-        }
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        for (const m of mats) {
-          if (m) {
-            const std = m as THREE.MeshStandardMaterial;
-            if (std.map) std.map.dispose();
-            if (std.normalMap) std.normalMap.dispose();
-            if (std.roughnessMap) std.roughnessMap.dispose();
-            if (std.metalnessMap) std.metalnessMap.dispose();
-            if (std.aoMap) std.aoMap.dispose();
-            if (std.emissiveMap) std.emissiveMap.dispose();
-            m.dispose();
-          }
-        }
-      }
-    });
+    disposeModelResources(this.currentAssetRoot);
+    this.renderer.renderLists.dispose();
 
     if (this.presentationWrapper) this.scene.remove(this.presentationWrapper);
     this.currentAssetRoot.removeFromParent();
     this.presentationWrapper = null;
     this.currentAssetRoot.clear();
     this.currentAssetRoot = null;
+    this.animationClips = [];
+    this.isPlayingAnimation = false;
     this.selectedMeshUuid = null;
   }
 
@@ -1974,10 +1961,14 @@ export class SceneManager {
     this.rigGizmo.dispose();
     this.lightingManager.dispose();
     this.surfaceManager.dispose();
+    this.renderResources.dispose();
     this.renderModeManager.dispose();
+    disposeModelResources(this.scene);
+    this.scene.clear();
 
     if (this.renderer) {
       this.renderer.dispose();
+      this.renderer.forceContextLoss();
       if (this.renderer.domElement.parentNode) {
         this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
       }

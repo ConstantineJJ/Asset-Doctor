@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {retainModelResources,retainModelGeometry,retainModelVariant} from '../loaders/ModelResources';
 import { cloneClips, rebaseClips, retimeClip } from '../animation/ClipEdits';
 import { documentMatrix } from '../viewer/AssetPresentation';
 import { getSourceAssociation, getSourceDocument, getSourceAudit } from '../loaders/AssetRuntimeMetadata';
@@ -57,6 +58,7 @@ export class RigEditSession {
 
   constructor(root:THREE.Group, clips:THREE.AnimationClip[],private geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry,private applyGeometry:(mesh:THREE.Mesh,geometry:THREE.BufferGeometry)=>void=(mesh,geometry)=>{mesh.geometry=geometry;}) {
     this.root=root;
+    retainModelResources(root);
     root.traverse(node=>{
       this.objects.set(node.uuid,node);
       this.variants.add(node);
@@ -216,7 +218,7 @@ export class RigEditSession {
         if(existing&&existing!==signature)throw new Error('Shared geometry requires conflicting joint-index rewrites.');sourceVariants.set(key,signature);
         const geometry=plan.kept.length?sourceGeometry.clone():bakeRestSkin(node,sourceGeometry);
         if(plan.kept.length)geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(values,4));
-        this.ownedGeometries.add(geometry);meshPlans.push({mesh:node,geometry});
+        this.ownedGeometries.add(geometry);retainModelGeometry(this.root,geometry);meshPlans.push({mesh:node,geometry});
       });
       const tracksToRemove=new Set<THREE.Object3D>(removed),staticMeshes=new Set(meshPlans.filter(plan=>!plans.get(plan.mesh.skeleton)!.kept.length).map(plan=>plan.mesh));
       const clips:THREE.AnimationClip[]=[],clipSources:number[]=[];
@@ -247,7 +249,7 @@ export class RigEditSession {
         let target:THREE.Mesh=mesh;
         if(staticMeshes.has(mesh)) {
           const replacement=new THREE.Mesh();replace(mesh,replacement);copySourceAssociation(mesh,replacement);
-          replacement.material=getAuthoredMaterialSet(mesh)??mesh.material;captureAuthoredMaterials(replacement);target=replacement;
+          replacement.material=getAuthoredMaterialSet(mesh)??mesh.material;captureAuthoredMaterials(replacement);retainModelVariant(this.root,replacement);target=replacement;
         }
         const previous=this.authored.geometryEdits.get(mesh.uuid),edit={before:previous?.before??this.geometrySource(mesh),geometry};
         this.authored={...this.authored,geometryEdits:new Map(this.authored.geometryEdits).set(mesh.uuid,edit)};
@@ -335,7 +337,7 @@ export class RigEditSession {
         const values=rewrites.get(mesh.geometry)!,old=mesh.geometry.getAttribute('skinIndex');
         if(values.every((value,i)=>value===old.getComponent(Math.floor(i/old.itemSize),i%old.itemSize)))continue;
         let clone=clones.get(mesh.geometry);
-        if(!clone){clone=mesh.geometry.clone();clone.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(values,old.itemSize));clones.set(mesh.geometry,clone);this.ownedGeometries.add(clone);}
+        if(!clone){clone=mesh.geometry.clone();clone.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(values,old.itemSize));clones.set(mesh.geometry,clone);this.ownedGeometries.add(clone);retainModelGeometry(this.root,clone);}
         const previous=this.authored.geometryEdits.get(mesh.uuid),edit={before:previous?.before??this.geometrySource(mesh),geometry:clone};
         this.authored={...this.authored,geometryEdits:new Map(this.authored.geometryEdits).set(mesh.uuid,edit)};
         this.applyGeometry(mesh,clone);this.appliedGeometryEdits.set(mesh.uuid,edit);
@@ -348,7 +350,7 @@ export class RigEditSession {
       const tips=new Map(this.authored.tips);tips.delete(uuid);this.authored={...this.authored,tips};
     });
   }
-  dispose() {for(const geometry of this.ownedGeometries)geometry.dispose();this.ownedGeometries.clear();}
+  dispose() {this.ownedGeometries.clear();}
   restoreRest() { this.apply(this.authored);if(this.mode==='pose')this.previewRevision++; }
   enterEdit() { this.restoreRest(); this.mode='edit'; }
   enterPose() { this.restoreRest(); this.mode='pose'; }

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {disposeModelResources} from '../loaders/ModelResources';
 import type { LightingConfig, LightingPreset } from '../types';
 
 export class LightingManager {
@@ -391,11 +392,13 @@ export class LightingManager {
   }
 
   public dispose() {
+    this.keyLight.dispose();this.fillLight.dispose();this.rimLight.dispose();
+    disposeModelResources(this.lightBulbGroup);
+    disposeModelResources(this.lightBeamLine);
     this.scene.remove(this.lightsGroup);
     this.lightsGroup.clear();
     this.scene.remove(this.lightBulbGroup);
     this.lightBulbGroup.clear();
     this.scene.remove(this.lightBeamLine);
-    this.lightBeamLine.geometry.dispose();
   }
 }

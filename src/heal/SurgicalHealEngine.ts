@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {disposeUnownedGeometry} from '../loaders/ModelResources';
 import { documentMatrix } from '../viewer/AssetPresentation';
 import type { HealApplyResult, HealMetrics, HealOperationKind, HealOperationReport, HealPreview, HealUndoState } from '../types';
 import { ComputeWorkerClient } from '../workers/ComputeWorkerClient';
@@ -194,7 +195,7 @@ export class SurgicalHealEngine {
     this.disposePending();
     for (const entry of this.undoStack) {
       if (entry.restore.mutation === 'geometry') {
-        entry.restore.previousGeometry.dispose();
+        disposeUnownedGeometry(entry.restore.previousGeometry);
       }
     }
     this.undoStack = [];
@@ -1106,7 +1107,7 @@ export class SurgicalHealEngine {
     return result;
     } finally {
       // A replaced asset must not retain the old geometry while postcheck was awaiting.
-      if(restore?.mutation==='geometry' && !restoreRecorded) restore.previousGeometry.dispose();
+      if(restore?.mutation==='geometry' && !restoreRecorded) disposeUnownedGeometry(restore.previousGeometry);
     }
   }
 
@@ -1146,7 +1147,7 @@ export class SurgicalHealEngine {
     } else {
       const repairedGeometry = mesh.geometry;
       mesh.geometry = undo.restore.previousGeometry;
-      repairedGeometry.dispose();
+      disposeUnownedGeometry(repairedGeometry);
     }
 
     this.undoStack.pop();

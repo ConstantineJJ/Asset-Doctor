@@ -6,11 +6,15 @@ export class SurfaceManager {
   private currentSurface: SurfaceType = 'grid';
   private surfaceMesh: THREE.Mesh | null = null;
   private static cachedTextures: Map<string, THREE.CanvasTexture> = new Map();
+  private static liveManagers=0;
+  private disposed=false;
   private groundHeight: number = 0;
   private groundRadius: number = 35;
+  private ownedEnvironment:THREE.Texture|null=null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    SurfaceManager.liveManagers++;
   }
 
   public setGroundHeight(y: number) {
@@ -1161,9 +1165,15 @@ export class SurfaceManager {
     const envTex = new THREE.CanvasTexture(canvas);
     envTex.mapping = THREE.EquirectangularReflectionMapping;
     this.scene.environment = envTex;
+    this.ownedEnvironment = envTex;
   }
 
   public dispose() {
+    if(this.disposed)return;this.disposed=true;
+    if(this.ownedEnvironment){
+      if(this.scene.environment===this.ownedEnvironment)this.scene.environment=null;
+      this.ownedEnvironment.dispose();this.ownedEnvironment=null;
+    }
     if (this.surfaceMesh) {
       this.scene.remove(this.surfaceMesh);
       this.surfaceMesh.geometry.dispose();
@@ -1174,6 +1184,7 @@ export class SurfaceManager {
       }
       this.surfaceMesh = null;
     }
+    if(--SurfaceManager.liveManagers===0)SurfaceManager.clearCache();
   }
 
   public static clearCache() {
