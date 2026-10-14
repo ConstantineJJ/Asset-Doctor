@@ -77,6 +77,7 @@ export function App() {
   const { t, language } = useI18n();
   // Scene & Service instances
   const sceneManagerRef = useRef<SceneManager | null>(null);
+  const doctorActiveRef = useRef(true);
   const loaderServiceRef = useRef<GLBLoaderService | null>(null);
   const workerManagerRef = useRef<WorkerManager | null>(null);
   const currentAssetRootRef = useRef<THREE.Group | null>(null);
@@ -586,6 +587,10 @@ export function App() {
     setActiveClipIndex(index=>Math.min(index,Math.max(0,session.clips.length-1)));
     void runAnalysisPipeline(root,session.clips,assetDetailsRef.current.name,assetDetailsRef.current.size);
   },[runAnalysisPipeline,discardFitting]);
+  const handleDoctorActiveChange = useCallback((active:boolean) => {
+    doctorActiveRef.current = active;
+    sceneManagerRef.current?.setActive(active);
+  }, []);
   const handleCanvasMount = useCallback(
     (container: HTMLElement) => {
       if (!sceneManagerRef.current) {
@@ -610,13 +615,13 @@ export function App() {
           onModelRotationChange: (deg) => {
             setModelRotation(deg);
           },
-        });
+        }, doctorActiveRef.current);
         sceneManagerRef.current = mgr;
         loaderServiceRef.current?.configureRenderer(mgr.renderer);
 
         // FPS polling
         const fpsInterval = setInterval(() => {
-          if (sceneManagerRef.current) {
+          if (sceneManagerRef.current && doctorActiveRef.current) {
             setFps(sceneManagerRef.current.fps);
           }
         }, 500);
@@ -1402,7 +1407,7 @@ export function App() {
   };
 
   const handleTogglePlayAnimation = () => {
-    if(rigSessionRef.current?.mode==='edit' || rigDragging) return;
+    if(!doctorActiveRef.current || rigSessionRef.current?.mode==='edit' || rigDragging) return;
     const next = !isPlayingAnimation;
     setIsPlayingAnimation(next);
     sceneManagerRef.current?.toggleAnimationPlay(next);
@@ -1518,7 +1523,7 @@ export function App() {
   // Ctrl+Z uses model histories; text fields retain their native text Undo.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if(pendingRigRemovalRef.current)return;
+      if(!doctorActiveRef.current||pendingRigRemovalRef.current)return;
       if(e.defaultPrevented||e.isComposing||e.target instanceof HTMLElement&&(e.target.isContentEditable||e.target.closest('input,textarea,select')))return;
       if(e.ctrlKey&&!e.altKey&&!e.shiftKey&&(e.code==='KeyZ'||e.key.toLowerCase()==='z')) {
         e.preventDefault();
@@ -1615,6 +1620,7 @@ export function App() {
         <Viewport
           rigToolbar={<RigEditorPanel {...rigEditorProps} variant="tools" />}
           onCanvasMount={handleCanvasMount}
+          onDoctorActiveChange={handleDoctorActiveChange}
           onFileDrop={requestOpenFile}
           isLoading={isLoading}
           fileName={fileName}

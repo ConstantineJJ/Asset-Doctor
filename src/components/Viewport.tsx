@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Box,
   Columns3,
@@ -19,6 +19,7 @@ import { useI18n } from '../i18n';
 interface ViewportProps {
   rigToolbar?:React.ReactNode;
   onCanvasMount: (container: HTMLElement) => void | (() => void);
+  onDoctorActiveChange: (active: boolean) => void;
   onFileDrop: (file: File) => void;
   isLoading: boolean;
   fileName?: string;
@@ -40,6 +41,7 @@ interface ViewportProps {
 export const Viewport: React.FC<ViewportProps> = ({
   rigToolbar,
   onCanvasMount,
+  onDoctorActiveChange,
   onFileDrop,
   isLoading,
   fileName,
@@ -63,6 +65,11 @@ export const Viewport: React.FC<ViewportProps> = ({
   const [showRotationControls, setShowRotationControls] = useState(true);
   const [showSurfaceMenu, setShowSurfaceMenu] = useState(false);
   const { language } = useI18n();
+
+  useLayoutEffect(() => {
+    onDoctorActiveChange(!compareOpen);
+    return () => onDoctorActiveChange(false);
+  }, [compareOpen, onDoctorActiveChange]);
 
   useEffect(() => {
     if (!containerRef.current) return;

@@ -54,6 +54,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
     if (!clips || clips.length === 0) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== ' ') return;
+      if (document.querySelector('[data-active-view="compare"]')) return;
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLSelectElement ||

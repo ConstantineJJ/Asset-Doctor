@@ -94,6 +94,8 @@ export class SceneManager {
   private selectedMeshUuid: string | null = null;
   private callbacks: SceneManagerCallbacks = {};
   private animationFrameId: number | null = null;
+  private active = false;
+  private disposed = false;
   private raycaster: THREE.Raycaster;
   private mouseVector: THREE.Vector2;
 
@@ -103,7 +105,7 @@ export class SceneManager {
   private lastFpsTime: number = performance.now();
   private resizeObserver: ResizeObserver | null = null;
 
-  constructor(container: HTMLElement, callbacks: SceneManagerCallbacks = {}) {
+  constructor(container: HTMLElement, callbacks: SceneManagerCallbacks = {}, active = true) {
     this.container = container;
     this.callbacks = callbacks;
     this.clock = new THREE.Clock();
@@ -153,7 +155,7 @@ export class SceneManager {
       changed:()=>{this.syncRigClips();this.callbacks.onRigChanged?.();},
       error:message=>this.callbacks.onRigError?.(message),
     });
-    this.startRenderLoop();
+    this.setActive(active);
   }
 
   private initOrientationWidget() {
@@ -1791,9 +1793,30 @@ export class SceneManager {
     this.renderer.setSize(width, height, false);
   }
 
+  /** Suspend only the viewport loop; playback intent, pose and authored state stay intact. */
+  public setActive(active: boolean) {
+    if (this.disposed || this.active === active) return;
+    this.active = active;
+    if (!active) {
+      if (this.animationFrameId !== null) cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+      this.clock.stop();
+      this.fps = 0;
+      return;
+    }
+    // A fresh clock epoch excludes time spent in Compare without resetting the action.
+    this.clock.start();
+    this.frameCount = 0;
+    this.lastFpsTime = performance.now();
+    this.onWindowResize();
+    this.startRenderLoop();
+  }
+
   private startRenderLoop() {
+    if (!this.active || this.disposed || this.animationFrameId !== null) return;
     const loop = () => {
-      this.animationFrameId = requestAnimationFrame(loop);
+      this.animationFrameId = null;
+      if (!this.active || this.disposed) return;
 
       const delta = this.clock.getDelta();
 
@@ -1808,6 +1831,8 @@ export class SceneManager {
         }
       }
 
+      if (!this.active || this.disposed) return;
+
       this.cameraController.update();
       this.updateOrientationWidget();
 
@@ -1820,6 +1845,8 @@ export class SceneManager {
           Math.round(THREE.MathUtils.radToDeg(this.modelRotationY))
         );
       }
+
+      if (!this.active || this.disposed) return;
 
       if (this.selectionBoxHelper) {
         this.selectionBoxHelper.update();
@@ -1838,8 +1865,9 @@ export class SceneManager {
         this.frameCount = 0;
         this.lastFpsTime = now;
       }
+      if (this.active && !this.disposed && this.animationFrameId === null) this.animationFrameId = requestAnimationFrame(loop);
     };
-    loop();
+    this.animationFrameId = requestAnimationFrame(loop);
   }
 
   public disposeCurrentAsset() {
@@ -1927,9 +1955,9 @@ export class SceneManager {
   }
 
   public dispose() {
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-    }
+    if (this.disposed) return;
+    this.setActive(false);
+    this.disposed = true;
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
       this.resizeObserver = null;
