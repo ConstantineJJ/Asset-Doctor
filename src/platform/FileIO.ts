@@ -1,4 +1,5 @@
 import { isTauri } from '@tauri-apps/api/core';
+import {assertMemoryBytes,memoryLimits} from '../performance/MemoryBudget';
 
 export { isTauri as isDesktop };
 
@@ -30,23 +31,29 @@ async function pickModelPaths(multiple:boolean):Promise<string[]> {
   return selected === null ? [] : Array.isArray(selected) ? selected : [selected];
 }
 
-async function readModelFile(path:string):Promise<File>{
-  const {readFile}=await import('@tauri-apps/plugin-fs');
+async function readModelFile(path:string,maxBytes:number=memoryLimits.modelFile):Promise<File>{
+  const {readFile,stat}=await import('@tauri-apps/plugin-fs');
+  const limit=Math.min(memoryLimits.modelFile,maxBytes);
+  assertMemoryBytes((await stat(path)).size,limit);
   const bytes=await readFile(path);
+  assertMemoryBytes(bytes.byteLength,limit);
   const name=path.split(/[\\/]/).pop() || 'model.glb';
   return new File([bytes],name,{type:/\.glb$/i.test(name)?'model/gltf-binary':'model/gltf+json'});
 }
 
 /** Apply the live Compare capacity before reading bytes, with only one File in flight. */
-export async function visitPickedModelFiles(capacity:()=>number,visit:(file:File)=>Promise<void>):Promise<{skipped:number}> {
+export async function visitPickedModelFiles(capacity:()=>number,visit:(file:File)=>Promise<void>,maxBytes:()=>number=()=>memoryLimits.modelFile):Promise<{skipped:number}> {
   const free=()=>Math.max(0,Math.floor(capacity()));
   if(free()===0)return {skipped:0};
   const paths=(await pickModelPaths(true)).filter(path=>/\.(glb|gltf)$/i.test(path));
   const admitted=paths.slice(0,free());
-  let consumed=0;
+  const initialBytes=maxBytes();
+  let consumed=0,consumedBytes=0;
   for(const path of admitted){
     if(free()===0)break;
-    await visit(await readModelFile(path));
+    const file=await readModelFile(path,Math.min(maxBytes(),initialBytes-consumedBytes));
+    consumedBytes+=file.size;
+    await visit(file);
     consumed++;
   }
   return {skipped:paths.length-consumed};

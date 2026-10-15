@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {disposeModelResources} from '../loaders/ModelResources';
 import {ComputeWorkerClient} from '../workers/ComputeWorkerClient';
-import {packRoot} from '../workers/GeometryPacket';
+import {packRoot,assertRootPacketBudget} from '../workers/GeometryPacket';
 import {captureGeometry,geometryMatches} from '../heal/GeometrySnapshot';
 import { getDocumentExtras, getTextureExtras } from '../loaders/AssetRuntimeMetadata';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
@@ -103,6 +103,7 @@ export class RepairedExportService {
   }
   public cancelActive() {this.compute.dispose();}
   public async exportAndVerifyInWorker(request:RepairedExportRequest):Promise<RepairedExportResult> {
+    assertRootPacketBudget(request.currentRoot);
     const startedAt=nowMs();
     const session=repairedMeshFingerprint(request.currentRoot,request.healReports);
     const structure=this.nodeStructureSignature(request.currentRoot);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {assertMemoryBytes,memoryLimits} from '../performance/MemoryBudget';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
@@ -30,6 +31,7 @@ export class GLBLoaderService {
   private readonly loadingManager: THREE.LoadingManager;
   private activeResourceErrors: string[] = [];
   private loadSequence: Promise<void> = Promise.resolve();
+  private pendingFiles=0;
 
   constructor(resourceBaseUrl?:string) {
     this.loadingManager = new THREE.LoadingManager();
@@ -103,15 +105,19 @@ export class GLBLoaderService {
   }
 
   public loadFromFile(file: File): Promise<LoadedModelResult> {
+    try{assertMemoryBytes(file.size,memoryLimits.modelFile);}catch(error){return Promise.reject(error);}
+    if(this.pendingFiles>=2)return Promise.reject(new Error('An import is already queued. Wait for it to finish before opening another model.'));
+    this.pendingFiles++;
     // LoadingManager and GLTFLoader are stateful. More importantly, two user
     // selections must never race so that a slower old file replaces the newer
     // choice. Serializing requests guarantees completion order == selection order.
-    const task = this.loadSequence.then(() => this.loadFromFileNow(file));
+    const task = this.loadSequence.then(() => this.loadFromFileNow(file)).finally(()=>{this.pendingFiles--;});
     this.loadSequence = task.then(() => undefined, () => undefined);
     return task;
   }
 
   private async loadFromFileNow(file: File): Promise<LoadedModelResult> {
+    assertMemoryBytes(file.size,memoryLimits.modelFile);
     const startedAt = nowMs();
     const arrayBuffer = await file.arrayBuffer();
     const sourceAudit = auditGltfSource(arrayBuffer);

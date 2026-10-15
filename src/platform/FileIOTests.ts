@@ -112,16 +112,23 @@ export async function runFileIOTests() {
 
     mockIPC((command) => {
       if (command === 'plugin:dialog|open') return ['C:\\Модели\\кошка.glb', '/tmp/robot.gltf'];
+      if (command === 'plugin:fs|stat') return {size:3};
       if (command === 'plugin:fs|read_file') return new Uint8Array([7, 8, 9]).buffer;
     });
     const files = await pickModelFiles(true);
     results.push({ name: 'Native model picker preserves Unicode basenames and bytes', passed: files.length === 2 && files[0].name === 'кошка.glb' && files[1].name === 'robot.gltf' && String(new Uint8Array(await files[0].arrayBuffer())) === '7,8,9' });
+
+    let oversizedReads=0;
+    mockIPC(command=>{if(command==='plugin:dialog|open')return 'C:/huge.glb';if(command==='plugin:fs|stat')return {size:1024*1024*1024};if(command==='plugin:fs|read_file'){oversizedReads++;return new Uint8Array([1]).buffer;}});
+    let admissionError='';try{await pickModelFiles();}catch(cause){admissionError=String(cause);}
+    results.push({name:'F07 oversized native files are rejected from metadata before readFile',passed:oversizedReads===0&&admissionError.includes('memory')});
 
     const reads:string[]=[],visited:string[]=[];
     let slots=2,releaseVisit!:(()=>void),opened=0;
     const visitBarrier=new Promise<void>(resolve=>{releaseVisit=resolve;});
     mockIPC((command,args)=>{
       if(command==='plugin:dialog|open'){opened++;return ['C:/A.glb','C:/B.glb','C:/C.glb'];}
+      if(command==='plugin:fs|stat')return {size:2};
       if(command==='plugin:fs|read_file'){reads.push((args as {path:string}).path);return new Uint8Array([1,2]).buffer;}
       throw new Error('Unexpected import command: '+command);
     });
@@ -137,9 +144,16 @@ export async function runFileIOTests() {
     await visitPickedModelFiles(()=>slots,async()=>{throw new Error('Stale capacity');});
     results.push({name:'F07 capacity is checked again after the asynchronous native dialog',passed:reads.length===0});
     slots=2;reads.length=0;
-    mockIPC(command=>{if(command==='plugin:dialog|open')return ['C:/A.glb','C:/B.glb'];if(command==='plugin:fs|read_file'){reads.push('read');return new Uint8Array([1]).buffer;}});
+    mockIPC(command=>{if(command==='plugin:dialog|open')return ['C:/A.glb','C:/B.glb'];if(command==='plugin:fs|stat')return {size:1};if(command==='plugin:fs|read_file'){reads.push('read');return new Uint8Array([1]).buffer;}});
     let visitError='';try{await visitPickedModelFiles(()=>slots,async()=>{throw new Error('import cancelled');});}catch(cause){visitError=String(cause);}
     results.push({name:'F07 failed or cancelled consumer stops further native reads',passed:reads.length===1&&visitError.includes('import cancelled')});
+    reads.length=0;let compareLimit='';
+    try{await visitPickedModelFiles(()=>2,async()=>{},()=>0);}catch(cause){compareLimit=String(cause);}
+    results.push({name:'F07 Compare remaining-byte budget is enforced before reading the next selected file',passed:reads.length===0&&compareLimit.includes('memory')});
+    reads.length=0;let batchLimit='';
+    mockIPC(command=>{if(command==='plugin:dialog|open')return ['C:/A.glb','C:/B.glb','C:/C.glb'];if(command==='plugin:fs|stat')return {size:2};if(command==='plugin:fs|read_file'){reads.push('read');return new Uint8Array([1,2]).buffer;}});
+    try{await visitPickedModelFiles(()=>3,async()=>{},()=>3);}catch(cause){batchLimit=String(cause);}
+    results.push({name:'F07 native batch byte admission does not depend on React publishing occupied bytes',passed:reads.length===1&&batchLimit.includes('memory')});
 
     mockIPC(() => null);
     results.push({ name: 'Native open cancellation returns no model', passed: (await pickModelFiles()).length === 0 });

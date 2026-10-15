@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import {assertMemoryBytes,binaryBytes,geometryArrays,memoryLimits} from '../performance/MemoryBudget';
+import {rigHistoryBytes,rigSnapshotMetadata} from './RigHistoryBudget';
 import {retainModelResources,retainModelGeometry,retainModelVariant} from '../loaders/ModelResources';
 import { cloneClips, rebaseClips, retimeClip } from '../animation/ClipEdits';
 import { documentMatrix } from '../viewer/AssetPresentation';
@@ -56,7 +58,7 @@ export class RigEditSession {
   revision=0;
   previewRevision=0;
 
-  constructor(root:THREE.Group, clips:THREE.AnimationClip[],private geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry,private applyGeometry:(mesh:THREE.Mesh,geometry:THREE.BufferGeometry)=>void=(mesh,geometry)=>{mesh.geometry=geometry;}) {
+  constructor(root:THREE.Group, clips:THREE.AnimationClip[],private geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry,private applyGeometry:(mesh:THREE.Mesh,geometry:THREE.BufferGeometry)=>void=(mesh,geometry)=>{mesh.geometry=geometry;},private readonly historyLimitBytes:number=memoryLimits.history) {
     this.root=root;
     retainModelResources(root);
     root.traverse(node=>{
@@ -205,6 +207,7 @@ export class RigEditSession {
     return summary;
   }
   removeJoints(uuid:string,scope:RemovalScope) {
+    this.assertHistoryBudget(true);
     this.editableStructure();this.deletionSummary(uuid,scope);
     this.transaction(()=>{
       const removed=removalBones(this.root,uuid,scope),plans=new Map<THREE.Skeleton,ReturnType<typeof removalSlots>>();
@@ -263,6 +266,7 @@ export class RigEditSession {
     });
   }
   addJoint(parentUuid:string):string {
+    this.assertHistoryBudget();
     this.editableStructure();
     const parent=this.bones.get(parentUuid);
     if(!parent||(!this.authored.nodes.has(parentUuid)||this.objects.get(parentUuid)!==parent))throw new Error('Select an active parent joint.');
@@ -327,6 +331,7 @@ export class RigEditSession {
     }return {rewrites,meshes};
   }
   deleteJoint(uuid:string) {
+    this.assertHistoryBudget(true);
     this.editableStructure();const reason=this.deletionBlockReason(uuid);if(reason)throw new Error(reason);
     const bone=this.bones.get(uuid)!;
     this.transaction(()=>{
@@ -369,14 +374,21 @@ export class RigEditSession {
   finishGesture() {
     if(!this.gesture) return;
     const gesture=this.gesture; this.gesture=null;
-    if(this.signature(this.authored)!==this.signature(gesture.base)) {this.past.push(gesture.base);this.future=[];this.revision++;}
+    if(this.signature(this.authored)!==this.signature(gesture.base)) {this.past.push(gesture.base);if(this.past.length>100)this.past.shift();this.future=[];this.revision++;}
   }
   cancelGesture() {
     if(!this.gesture) return;
     const gesture=this.gesture;this.gesture=null;this.authored=gesture.base;this.past=gesture.past;this.future=gesture.future;this.revision=gesture.revision;this.restoreRest();
   }
 
+  private assertHistoryBudget(geometryCopy=false){
+    const retained=rigHistoryBytes([this.baseline,this.authored,...this.past,...this.future],this.ownedGeometries,this.signatures);
+    const clips=this.clips.flatMap(clip=>clip.tracks.flatMap(track=>[track.times,track.values]));
+    const geometryReserve=geometryCopy?[...this.authored.geometries.values()].reduce((sum,geometry)=>sum+2*binaryBytes(geometryArrays(geometry)),0):0;
+    assertMemoryBytes(retained+binaryBytes(clips)+rigSnapshotMetadata(this.authored)+geometryReserve,this.historyLimitBytes);
+  }
   private transaction(update:()=>void) {
+    this.assertHistoryBudget();
     const live=this.capture(this.authored.clips,this.authored.tips), previous=this.authored;
     try {
       this.restoreRest(); update();
@@ -487,6 +499,7 @@ export class RigEditSession {
   setClipDuration(index:number,seconds:number) {
     if(this.isGestureActive)throw new Error('Finish the joint drag before changing clip duration.');
     if(!this.clips[index]) throw new Error('Unknown animation clip.');
+    this.assertHistoryBudget();
     const changed=retimeClip(this.clips[index],seconds);
     this.transaction(()=>{const clips=this.clips.slice(); clips[index]=changed; this.authored={...this.authored,clips};});
   }

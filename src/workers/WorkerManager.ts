@@ -6,6 +6,7 @@ import { documentMatrix } from '../viewer/AssetPresentation';
 import { nowMs, performanceCore } from '../performance/PerformanceProfiler';
 
 const WORKER_TASK_TIMEOUT_MS = 15000;
+import {workerInputBudget} from '../performance/MemoryBudget';
 
 export interface WorkerAnalysisOptions {
   signal?: AbortSignal;
@@ -189,6 +190,8 @@ export class WorkerManager {
         }
 
         metrics.cacheMisses++;
+        const releaseMemory=workerInputBudget.reserve(mesh.geometry.getAttribute('position').count*12+(mesh.geometry.index?.count??0)*4);
+        try {
         const extractionStart = nowMs();
         let meshData = meshTopologyData(mesh);
         metrics.extractionMs += nowMs() - extractionStart;
@@ -249,6 +252,7 @@ export class WorkerManager {
           this.storeCache(mesh, stats);
         }
 
+        } finally {releaseMemory();}
         onProgress?.(i + 1, meshes.length);
       }
 

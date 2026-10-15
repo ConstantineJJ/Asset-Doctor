@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {binaryBytes,geometryArrays,memoryLimits} from '../performance/MemoryBudget';
 import {disposeUnownedGeometry} from '../loaders/ModelResources';
 import { documentMatrix } from '../viewer/AssetPresentation';
 import type { HealApplyResult, HealMetrics, HealOperationKind, HealOperationReport, HealPreview, HealUndoState } from '../types';
@@ -70,6 +71,7 @@ interface UndoHeal {
  * are left untouched.
  */
 export class SurgicalHealEngine {
+  constructor(private readonly historyLimitBytes:number=memoryLimits.history){}
   private pending: PendingHeal | null = null;
   private undoStack: UndoHeal[] = [];
   private lastOperation: HealOperationReport | null = null;
@@ -1004,6 +1006,13 @@ export class SurgicalHealEngine {
       return { success: false, reasonKey: 'heal.errors.sharedGeometry' };
     }
 
+    const retained=binaryBytes(this.undoStack.map(entry=>[entry.appliedSnapshot.entries.map(item=>item.bytes),entry.restore.mutation==='index-only'?entry.restore.previousIndex.array:geometryArrays(entry.restore.previousGeometry)]));
+    const projected=pending.mutation==='index-only'
+      ? pending.snapshot.entries.reduce((sum,entry)=>sum+entry.bytes.byteLength,0)+pending.replacementIndex.array.byteLength
+      : Object.values(pending.replacementGeometry.attributes).concat(Object.values(pending.replacementGeometry.morphAttributes).flat()).reduce((sum,attribute)=>sum+attribute.array.byteLength,0)+(pending.replacementGeometry.index?.array.byteLength??0)+binaryBytes(geometryArrays(geometry));
+    if(retained+projected>this.historyLimitBytes){
+      this.disposePending();return {success:false,reason:'Undo memory limit reached. Save the model and reopen it before making more changes.'};
+    }
     const before=yield mesh;
     if(!before) {
       this.disposePending();

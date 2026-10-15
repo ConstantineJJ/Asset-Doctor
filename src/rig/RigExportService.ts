@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ComputeWorkerClient } from '../workers/ComputeWorkerClient';
-import { packRoot } from '../workers/GeometryPacket';
+import { packRoot,assertRootPacketBudget } from '../workers/GeometryPacket';
 import { packClips } from '../animation/ClipPacket';
 import { captureGeometry,geometryMatches } from '../heal/GeometrySnapshot';
 import type { HealOperationReport } from '../types';
@@ -13,6 +13,7 @@ export class RigExportService {
   private compute=new ComputeWorkerClient(()=>new Worker(new URL('../workers/rig-export.worker.ts',import.meta.url),{type:'module'}));
   cancelActive() {this.compute.dispose();}
   async export(session:RigEditSession,source:ArrayBuffer,fileName:string,reports:HealOperationReport[]=[],geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry):Promise<RigExportResult> {
+    assertRootPacketBudget(session.root,geometrySource);
     const start=performance.now(),revision=session.revision,authored=session.snapshot();
     const patch=buildRigExportPacket(session,source,reports,geometrySource);
     await new Promise(resolve=>setTimeout(resolve,0));

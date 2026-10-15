@@ -1,4 +1,5 @@
 import {markStartup} from '../platform/StartupTrace';
+import {assertMemoryBytes,memoryLimits} from '../performance/MemoryBudget';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
@@ -273,6 +274,8 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       // Yield to the browser between files to allow UI rendering and event loop handling
       await new Promise<void>((resolve) => setTimeout(resolve, 25));
       try {
+        const resident=assetsRef.current.reduce((sum,asset)=>sum+(asset.sourceBuffer?.byteLength??asset.fileSizeBytes??0),0)+loaded.reduce((sum,asset)=>sum+(asset.sourceBuffer?.byteLength??asset.fileSizeBytes??0),0);
+        assertMemoryBytes(file.size,Math.min(memoryLimits.modelFile,memoryLimits.compareSources-resident));
         const result = await loader.loadFromFile(file);
         if (loaderRef.current !== loader) {
           disposeModelResources(result.root);
@@ -329,7 +332,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
         await addFiles([file]);
         // Publish the newly occupied slot before considering the next native path.
         await new Promise<void>(resolve=>setTimeout(resolve,0));
-      });
+      },()=>memoryLimits.compareSources-assetsRef.current.reduce((sum,asset)=>sum+(asset.sourceBuffer?.byteLength??asset.fileSizeBytes??0),0));
       if(result.skipped)setLoadError(`Пропущено файлов: ${result.skipped}. В Compare доступно не более 8 мест.`);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error));

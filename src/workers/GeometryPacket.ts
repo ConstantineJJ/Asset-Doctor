@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {assertMemoryBytes,geometryArrays,memoryLimits} from '../performance/MemoryBudget';
 
 type Attribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
 interface AttributePacket {array:THREE.TypedArray;itemSize:number;normalized:boolean;stride?:number;offset?:number;version:number;name:string;usage:THREE.Usage;gpuType:THREE.AttributeGPUType;float16?:boolean}
@@ -43,7 +44,14 @@ export function unpackGeometry(packet:GeometryPacket):THREE.BufferGeometry {
 
 interface NodePacket {uuid:string;name:string;type:'bone'|'mesh'|'skin'|'node';matrix:number[];visible:boolean;geometry?:GeometryPacket;instanced?:boolean;
  children:NodePacket[];bones?:string[];inverses?:number[][];bind?:number[];bindInverse?:number[];bindMode?:THREE.BindMode;morphInfluences?:number[];morphDictionary?:Record<string,number>}
-export function packRoot(root:THREE.Object3D,geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry):NodePacket {
+export function assertRootPacketBudget(root:THREE.Object3D,geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry,maxBytes:number=memoryLimits.packet){
+ const sources=new Set<THREE.BufferGeometry>();let bytes=0;
+ root.traverse(node=>{if(!(node as THREE.Mesh).isMesh)return;const geometry=geometrySource(node as THREE.Mesh);if(sources.has(geometry))return;sources.add(geometry);
+  for(const array of new Set(geometryArrays(geometry)))bytes+=array.byteLength;
+ });assertMemoryBytes(bytes,maxBytes);
+}
+export function packRoot(root:THREE.Object3D,geometrySource:(mesh:THREE.Mesh)=>THREE.BufferGeometry=mesh=>mesh.geometry,maxBytes:number=memoryLimits.packet):NodePacket {
+ assertRootPacketBudget(root,geometrySource,maxBytes);
  const geometries=new Map<THREE.BufferGeometry,GeometryPacket>();root.updateWorldMatrix(true,true);
  const pack=(node:THREE.Object3D):NodePacket=>{
   const mesh=node as THREE.SkinnedMesh;
