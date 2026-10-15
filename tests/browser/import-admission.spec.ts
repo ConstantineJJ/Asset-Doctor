@@ -17,7 +17,7 @@ test('F07 oversized native selection leaves existing Compare models intact witho
   }});
  });
  await page.getByRole('button',{name:'Добавить 1/8',exact:true}).click();
- await expect(page.getByText(/Operation exceeds the memory limit/)).toBeVisible();
+ await expect(page.getByText(/File "huge.glb" size exceeds the configured memory budget \(1024.00 MiB; maximum 64.00 MiB\)/)).toBeVisible();
  expect(await page.evaluate(()=>Reflect.get(window,'oversizedReads'))).toBe(0);
  await expect(page.getByRole('button',{name:'Добавить 1/8',exact:true})).toBeVisible();
  await expect(page.locator('span[title="kept.glb"]').first()).toBeVisible();

@@ -275,7 +275,8 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       await new Promise<void>((resolve) => setTimeout(resolve, 25));
       try {
         const resident=assetsRef.current.reduce((sum,asset)=>sum+(asset.sourceBuffer?.byteLength??asset.fileSizeBytes??0),0)+loaded.reduce((sum,asset)=>sum+(asset.sourceBuffer?.byteLength??asset.fileSizeBytes??0),0);
-        assertMemoryBytes(file.size,Math.min(memoryLimits.modelFile,memoryLimits.compareSources-resident));
+        assertMemoryBytes(file.size,memoryLimits.modelFile,'Model file size');
+        assertMemoryBytes(resident+file.size,memoryLimits.compareSources,'Compare source data');
         const result = await loader.loadFromFile(file);
         if (loaderRef.current !== loader) {
           disposeModelResources(result.root);

@@ -1,12 +1,17 @@
 import type * as THREE from 'three';
 
 const MiB=1024*1024;
+const modelFile=64*MiB;
 // Operational binary budgets, sized above the measured 500001-triangle control.
 // They are not estimates of available RAM, process heap limits or GPU memory.
-export const memoryLimits={modelFile:64*MiB,compareSources:128*MiB,packet:32*MiB,workerInputs:64*MiB,history:128*MiB} as const;
+// Every one of Compare's eight slots admits the same per-file allowance.
+export const memoryLimits={modelFile,compareSources:8*modelFile,packet:32*MiB,workerInputs:64*MiB,history:128*MiB} as const;
 
-export function assertMemoryBytes(bytes:number,limit:number){
- if(!Number.isSafeInteger(bytes)||bytes<0||bytes>limit)throw new Error('Operation exceeds the memory limit. Use a smaller model or fewer Compare models.');
+export function assertMemoryBytes(bytes:number,limit:number,label='Operation'){
+ if(!Number.isSafeInteger(bytes)||bytes<0||bytes>limit){
+  const size=(value:number)=>Number.isFinite(value)&&value>=0?`${(value/MiB).toFixed(2)} MiB`:'invalid size';
+  throw new Error(`${label} exceeds the configured memory budget (${size(bytes)}; maximum ${size(limit)}).`);
+ }
 }
 export class ByteBudget {
  private occupied=0;

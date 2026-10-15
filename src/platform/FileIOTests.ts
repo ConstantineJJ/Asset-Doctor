@@ -1,4 +1,5 @@
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
+import {memoryLimits} from '../performance/MemoryBudget';
 import { confirmRepairQueue, pickModelFiles, saveBinaryFile, requestDesktopClose, protectDesktopClose, visitPickedModelFiles } from './FileIO';
 
 export async function runFileIOTests() {
@@ -154,6 +155,12 @@ export async function runFileIOTests() {
     mockIPC(command=>{if(command==='plugin:dialog|open')return ['C:/A.glb','C:/B.glb','C:/C.glb'];if(command==='plugin:fs|stat')return {size:2};if(command==='plugin:fs|read_file'){reads.push('read');return new Uint8Array([1,2]).buffer;}});
     try{await visitPickedModelFiles(()=>3,async()=>{},()=>3);}catch(cause){batchLimit=String(cause);}
     results.push({name:'F07 native batch byte admission does not depend on React publishing occupied bytes',passed:reads.length===1&&batchLimit.includes('memory')});
+
+    reads.length=0;
+    mockIPC(command=>{if(command==='plugin:dialog|open')return ['C:/Cloth_capushon_Q_554.glb'];if(command==='plugin:fs|stat')return {size:29858524};if(command==='plugin:fs|read_file'){reads.push('read');return new Uint8Array([1]).buffer;}});
+    let eighthVisited=false;
+    try{await visitPickedModelFiles(()=>1,async()=>{eighthVisited=true;},()=>memoryLimits.compareSources-128257268);}catch{}
+    results.push({name:'F07 native eighth-slot metadata admission accepts the owner corpus beyond the former 128 MiB cap',passed:eighthVisited&&reads.length===1});
 
     mockIPC(() => null);
     results.push({ name: 'Native open cancellation returns no model', passed: (await pickModelFiles()).length === 0 });

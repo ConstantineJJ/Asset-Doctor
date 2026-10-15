@@ -105,7 +105,7 @@ export class GLBLoaderService {
   }
 
   public loadFromFile(file: File): Promise<LoadedModelResult> {
-    try{assertMemoryBytes(file.size,memoryLimits.modelFile);}catch(error){return Promise.reject(error);}
+    try{assertMemoryBytes(file.size,memoryLimits.modelFile,'Model file size');}catch(error){return Promise.reject(error);}
     if(this.pendingFiles>=2)return Promise.reject(new Error('An import is already queued. Wait for it to finish before opening another model.'));
     this.pendingFiles++;
     // LoadingManager and GLTFLoader are stateful. More importantly, two user
@@ -117,7 +117,7 @@ export class GLBLoaderService {
   }
 
   private async loadFromFileNow(file: File): Promise<LoadedModelResult> {
-    assertMemoryBytes(file.size,memoryLimits.modelFile);
+    assertMemoryBytes(file.size,memoryLimits.modelFile,'Model file size');
     const startedAt = nowMs();
     const arrayBuffer = await file.arrayBuffer();
     const sourceAudit = auditGltfSource(arrayBuffer);

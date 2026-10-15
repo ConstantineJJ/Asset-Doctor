@@ -34,10 +34,11 @@ async function pickModelPaths(multiple:boolean):Promise<string[]> {
 async function readModelFile(path:string,maxBytes:number=memoryLimits.modelFile):Promise<File>{
   const {readFile,stat}=await import('@tauri-apps/plugin-fs');
   const limit=Math.min(memoryLimits.modelFile,maxBytes);
-  assertMemoryBytes((await stat(path)).size,limit);
-  const bytes=await readFile(path);
-  assertMemoryBytes(bytes.byteLength,limit);
   const name=path.split(/[\\/]/).pop() || 'model.glb';
+  const label=`File "${name}" size`;
+  assertMemoryBytes((await stat(path)).size,limit,label);
+  const bytes=await readFile(path);
+  assertMemoryBytes(bytes.byteLength,limit,label);
   return new File([bytes],name,{type:/\.glb$/i.test(name)?'model/gltf-binary':'model/gltf+json'});
 }
 

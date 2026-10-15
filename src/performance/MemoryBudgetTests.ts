@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import {ByteBudget,binaryBytes} from './MemoryBudget';
+import {ByteBudget,binaryBytes,assertMemoryBytes} from './MemoryBudget';
 import {ComputeWorkerClient} from '../workers/ComputeWorkerClient';
 import {packRoot} from '../workers/GeometryPacket';
 import {SurgicalHealEngine} from '../heal/SurgicalHealEngine';
@@ -9,6 +9,11 @@ import {memoryLimits} from './MemoryBudget';
 
 export async function runMemoryBudgetTests(){
  const results:{name:string;passed:boolean;actual?:unknown;expected?:unknown}[]=[];
+ results.push({name:'F07 all eight Compare slots admit the full per-file allowance',passed:memoryLimits.compareSources>=8*memoryLimits.modelFile,actual:memoryLimits.compareSources,expected:8*memoryLimits.modelFile});
+ let boundaryAccepted=true,overflowMessage='';
+ try{assertMemoryBytes(8*memoryLimits.modelFile,memoryLimits.compareSources,'Compare source data');}catch{boundaryAccepted=false;}
+ try{assertMemoryBytes(memoryLimits.compareSources+1,memoryLimits.compareSources,'Compare source data');}catch(error){overflowMessage=String(error);}
+ results.push({name:'F07 source admission permits its exact boundary and reports the configured domain and size on overflow',passed:boundaryAccepted&&overflowMessage.includes('Compare source data')&&overflowMessage.includes('512.00 MiB')&&!overflowMessage.includes('fewer Compare')});
  const budget=new ByteBudget(8),release=budget.reserve(6);
  let blocked=false;try{budget.reserve(3);}catch{blocked=true;}
  release();release();
