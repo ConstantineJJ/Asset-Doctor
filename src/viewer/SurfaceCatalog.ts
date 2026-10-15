@@ -16,7 +16,7 @@ export const surfaceChoices=[
  ...floorTiles,
  {id:'tile',labelRu:'Керамогранит',labelEn:'Porcelain Tile',icon:'🏛️'},
  {id:'cobblestone',labelRu:'Брусчатка',labelEn:'Cobblestone',icon:'🧱'},
- {id:'factory',labelRu:'Завод / Цех',labelEn:'Factory / Workshop',icon:'🏭'},
+ {id:'factory',labelRu:'Завод / Цех',labelEn:'Factory Floor',icon:'🏭'},
  {id:'moon',labelRu:'Лунная поверхность',labelEn:'Moon Surface',icon:'🌑'},
  {id:'countryside',labelRu:'Сельская местность',labelEn:'Countryside',icon:'🌾'},
  {id:'wood',labelRu:'Деревянный пол',labelEn:'Wood Floor',icon:'🪵'},

@@ -1,4 +1,5 @@
 mod startup_trace;
+mod debug_log;
 use std::sync::{Arc, atomic::Ordering};
 use tauri::Manager;
 use startup_trace::StartupTrace;
@@ -33,7 +34,8 @@ pub fn run() {
     let window_trace = trace.clone();
     tauri::Builder::default()
         .manage(trace.clone())
-        .invoke_handler(tauri::generate_handler![startup_mark])
+        .manage(Arc::new(debug_log::DebugLog::default()))
+        .invoke_handler(tauri::generate_handler![startup_mark,debug_log::debug_log_append,debug_log::debug_log_read,debug_log::debug_log_clear])
         .setup(move |_| { setup_trace.record("setup"); Ok(()) })
         .on_page_load(move |_, payload| { page_trace.record(match payload.event() { tauri::webview::PageLoadEvent::Started => "page_started", tauri::webview::PageLoadEvent::Finished => "page_finished" }); })
         .on_window_event(move |_, event| { match event { tauri::WindowEvent::CloseRequested { .. } => window_trace.record("window_close_request"), tauri::WindowEvent::Destroyed => window_trace.record("window_destroyed"), _ => {} } })

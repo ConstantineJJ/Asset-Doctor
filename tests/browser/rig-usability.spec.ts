@@ -329,9 +329,9 @@ test('Ctrl+Z does not undo the hidden Doctor asset while Compare is open',async(
   await page.keyboard.press('Control+z');await expect.poll(async()=>(await rigViewerState(page)).bones.find(bone=>bone.uuid===root.uuid)!.position).toEqual(root.position);
 });
 
-test('Version 2.0.10 is visible and model rotation controls occupy the top of the viewport above playback', async ({ page }) => {
+test('Version 2.0.11 is visible and model rotation controls occupy the top of the viewport above playback', async ({ page }) => {
   await openRig(page);
-  await expect(page.getByText(/\b2\.0\.10\b/).first()).toBeVisible();
+  await expect(page.getByText(/\b2\.0\.11\b/).first()).toBeVisible();
   const rotation = page.getByTestId('model-rotation-controls'); await expect(rotation).toBeVisible();
   const controls = (await rotation.boundingBox())!, viewport = (await page.locator('canvas:visible').first().boundingBox())!;
   const play = (await page.getByTitle('Play', { exact: true }).boundingBox())!;

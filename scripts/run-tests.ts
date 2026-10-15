@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import {runSystemLogTests} from '../src/platform/SystemLogTests';
 import {runFloorTexturePoolTests} from '../src/viewer/FloorTexturePoolTests';
 import {runShortcutTests} from '../src/platform/ShortcutTests';
 import {runF08Tests} from '../src/performance/F08Tests';
@@ -14,6 +15,7 @@ import {runRigFittingTests} from '../src/rig/RigFittingTests';
 import { runFileIOTests } from '../src/platform/FileIOTests';
 import { runDiagnosticCoreTests } from '../src/analysis/DiagnosticCoreTests';
 import { runDiagnosticCoverageTests } from '../src/analysis/DiagnosticCoverageTests';
+import {runDiagnosticReportTests} from '../src/diagnostics/DiagnosticReportTests';
 import { runSourceFidelityTests } from '../src/analysis/SourceFidelityTests';
 import { runCompareLayoutTests } from '../src/compare/CompareLayoutTests';
 import { runCompareCloneTests } from '../src/compare/CompareCloneTests';
@@ -30,6 +32,8 @@ import {
 
 async function main() {
   const results = [
+    ...runDiagnosticReportTests(),
+    ...(await runSystemLogTests()),
     ...(await runFloorTexturePoolTests()),
     ...runShortcutTests(),
     ...runF08Tests(),

@@ -2,6 +2,7 @@ import {surfaceChoices} from '../viewer/SurfaceCatalog';
 import {shortcuts,shortcutEventAllowed} from '../platform/Shortcuts';
 import {markStartup} from '../platform/StartupTrace';
 import {assertMemoryBytes,memoryLimits} from '../performance/MemoryBudget';
+import {systemLog} from '../platform/SystemLog';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
@@ -314,6 +315,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
           manualScale: 1,
         });
       } catch (error) {
+        systemLog.record('error','compare','import_failed',{fileName:file.name,error});
         setLoadError(`${file.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }

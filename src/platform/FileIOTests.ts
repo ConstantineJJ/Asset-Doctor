@@ -1,6 +1,6 @@
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import {memoryLimits} from '../performance/MemoryBudget';
-import { confirmRepairQueue, pickModelFiles, saveBinaryFile, requestDesktopClose, protectDesktopClose, visitPickedModelFiles } from './FileIO';
+import { confirmRepairQueue, pickModelFiles, saveBinaryFile, saveTextFile, requestDesktopClose, protectDesktopClose, visitPickedModelFiles } from './FileIO';
 
 export async function runFileIOTests() {
   const results: { name: string; passed: boolean; actual?: unknown; expected?: unknown }[] = [];
@@ -69,6 +69,12 @@ export async function runFileIOTests() {
     });
     const cancelled = await saveBinaryFile('repaired.glb', new Uint8Array([1, 2, 3]).buffer);
     results.push({ name: 'Native save cancellation leaves the repaired copy unsaved', passed: cancelled === false && writes === 0 });
+    results.push({name:'Native text report cancellation performs no filesystem write',passed:await saveTextFile('report.json','{"issue":"Ж"}')==='cancelled'&&writes===0});
+    mockIPC(command=>{if(command==='plugin:dialog|save')return 'C:\\report.json';if(command==='plugin:fs|write_file')writes++;});
+    results.push({name:'Native stale text report is rejected before writing',passed:await saveTextFile('report.json','{}',()=>false)==='cancelled'&&writes===0});
+    mockIPC(command=>{if(command==='plugin:dialog|save')return 'C:\\report.json';if(command==='plugin:fs|write_file')throw new Error('disk full');});
+    let reportError='';try{await saveTextFile('report.json','{}');}catch(error){reportError=String(error);}
+    results.push({name:'Native text report write failure does not report a saved file',passed:reportError.includes('disk full')});
 
     let releaseSave!:(path:string)=>void;
     let dialogOpened=false, current=true;

@@ -102,7 +102,7 @@ export class SurgicalHealEngine {
   public async previewInWorker(root:THREE.Object3D,meshUuid:string,operation:HealOperationKind,issueId:string):Promise<HealPreview> {
     this.cancelPreview();
     const generation=this.generation;
-    const result=await this.compute.request<{preview:HealPreview;plan:null|{mutation:PendingHeal['mutation'];geometryUuid:string;snapshot:GeometrySnapshot;replacement:GeometryPacket}}>({kind:'preview',root:packRoot(root),meshUuid,operation,issueId});
+    const result=await this.compute.request<{preview:HealPreview;plan:null|{mutation:PendingHeal['mutation'];geometryUuid:string;snapshot:GeometrySnapshot;replacement:GeometryPacket}}>({kind:'preview',root:packRoot(root),meshUuid,operation,issueId},{stage:'repair_preview',assetId:root.uuid,reason:operation});
     if(generation!==this.generation) throw new Error('Stale repair preview');
     if(result.plan) {
       const mesh=root.getObjectByProperty('uuid',meshUuid) as THREE.Mesh|undefined;

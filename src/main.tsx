@@ -1,3 +1,4 @@
+import './platform/InitializeSystemLog';
 import {markStartup} from './platform/StartupTrace';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';

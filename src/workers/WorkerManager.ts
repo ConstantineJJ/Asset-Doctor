@@ -1,4 +1,5 @@
 import {noMetrics,type MetricsSink} from '../performance/MetricsSink';
+import {systemLog} from '../platform/SystemLog';
 import * as THREE from 'three';
 import { analyzeMeshTopology, type RawMeshData } from '../analysis/TopologyAnalyzer';
 import type { TopologyPerformanceStats, TopologyStats } from '../types';
@@ -69,6 +70,7 @@ export class WorkerManager {
       return true;
     } catch (e) {
       console.warn('Worker initialization fallback to async thread execution:', e);
+      systemLog.record('warn','topology','worker_unavailable',{error:e});
       this.worker = null;
       this.workerConstructionUnavailable = true;
       return false;
@@ -150,6 +152,7 @@ export class WorkerManager {
 
     this.metrics.beginTopologyPhase?.(root.uuid);
     const topologyStageStart = nowMs();
+    const operation=systemLog.begin('topology',{assetId:root.uuid,mode:this.worker?'worker':'fallback'});
 
     try {
       const meshes: THREE.Mesh[] = [];
@@ -263,9 +266,11 @@ export class WorkerManager {
       this.metrics.completeAnalysisCycle?.(root.uuid);
       return results;
     } catch (error) {
+      operation.end(isAbortError(error)?'cancelled':'failed',{error});
       if (isAbortError(error)) this.metrics.cancelAnalysisCycle?.(root.uuid);
       throw error;
     } finally {
+      operation.end('completed');
       options.signal?.removeEventListener('abort', externalAbort);
       if (this.activeAnalysisController === controller) this.activeAnalysisController = null;
     }

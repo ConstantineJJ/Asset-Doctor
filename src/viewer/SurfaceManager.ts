@@ -1,3 +1,4 @@
+import {systemLog} from '../platform/SystemLog';
 import * as THREE from 'three';
 import type { SurfaceType } from '../types';
 import {floorTiles} from './SurfaceCatalog';
@@ -56,7 +57,7 @@ export class SurfaceManager {
       const url=new URL(`${import.meta.env.BASE_URL}tiles/${tile.file}`,window.location.href).href;
       const lease=floorTextures.acquire(url,tile.repeat);this.tileLease=lease;
       lease.ready.then(()=>{if(this.tileLease!==lease||this.disposed)return;material.map=lease.texture;material.needsUpdate=true;})
-        .catch(error=>{if(this.tileLease===lease&&!this.disposed)console.warn(`Floor texture unavailable: ${tile.file}`,error);});
+        .catch(error=>{if(this.tileLease===lease&&!this.disposed){systemLog.record('warn','floor','load_failed',{surface:tile.file,error});console.warn(`Floor texture unavailable: ${tile.file}`,error);}});
     }
     const geometry = new THREE.PlaneGeometry(70, 70, 64, 64);
     geometry.rotateX(-Math.PI / 2);

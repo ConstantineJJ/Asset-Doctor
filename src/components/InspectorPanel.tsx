@@ -15,6 +15,7 @@ import {
   Eye,
   FileText,
   Focus,
+  ScrollText,
   Gauge,
   HelpCircle,
   Image,
@@ -79,6 +80,7 @@ interface InspectorPanelProps {
   lightingConfig: LightingConfig;
   onUpdateLighting: (config: Partial<LightingConfig>) => void;
   onFocusIssue: (issue: HealthIssue) => void;
+  onLogIssue: (issue: HealthIssue) => void;
   isIssueFocusActive: boolean;
   onRestoreIssueView: () => void;
   healPreview: HealPreview | null;
@@ -129,7 +131,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onIsolateSelectedSkinnedMesh,
   lightingConfig,
   onUpdateLighting,
-  onFocusIssue,
+  onFocusIssue,onLogIssue,
   isIssueFocusActive,
   onRestoreIssueView,
   healPreview,
@@ -781,6 +783,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     </div>
                   </div>
 
+                  <div className="flex items-center gap-1 shrink-0">
                   {(issue.focusPosition || issue.meshUuid) && (
                     <button
                       onClick={() => focusIssueLocation(issue)}
@@ -791,6 +794,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       <span>{t('inspector.focus')}</span>
                     </button>
                   )}
+                  <button type="button" aria-label={language==='ru'?'Сохранить карточку':'Log this finding'} title={language==='ru'?'Сохранить отчёт по этой карточке':'Save this finding as a report'} onClick={()=>onLogIssue(issue)} className="rounded p-1.5 text-cyan-300 hover:bg-[#323642]"><ScrollText className="w-3.5 h-3.5"/></button>
+                  </div>
                 </div>
 
                 <p className="pl-7 text-[13px] leading-relaxed text-gray-200">

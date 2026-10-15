@@ -1,4 +1,5 @@
 import { isTauri } from '@tauri-apps/api/core';
+import {systemLog} from './SystemLog';
 import {assertMemoryBytes,memoryLimits} from '../performance/MemoryBudget';
 
 export { isTauri as isDesktop };
@@ -36,10 +37,14 @@ async function readModelFile(path:string,maxBytes:number=memoryLimits.modelFile)
   const limit=Math.min(memoryLimits.modelFile,maxBytes);
   const name=path.split(/[\\/]/).pop() || 'model.glb';
   const label=`File "${name}" size`;
+  const operation=systemLog.begin('file_read',{fileName:name});
+  try {
   assertMemoryBytes((await stat(path)).size,limit,label);
   const bytes=await readFile(path);
   assertMemoryBytes(bytes.byteLength,limit,label);
+  operation.end('completed',{fileBytes:bytes.byteLength});
   return new File([bytes],name,{type:/\.glb$/i.test(name)?'model/gltf-binary':'model/gltf+json'});
+  }catch(error){operation.end('failed',{error});throw error;}
 }
 
 /** Apply the live Compare capacity before reading bytes, with only one File in flight. */
@@ -67,6 +72,20 @@ export async function pickModelFiles(multiple = false): Promise<File[]> {
     files.push(await readModelFile(path));
   }
   return files;
+}
+
+/** Logs/reports have their own result; they never clear model repair protection. */
+export async function saveTextFile(fileName:string,text:string,stillCurrent:()=>boolean=()=>true):Promise<'saved'|'downloaded'|'cancelled'>{
+ const bytes=new TextEncoder().encode(text);if(bytes.byteLength>8*1024*1024)throw new Error('Report exceeds the 8 MiB save limit.');
+ if(isTauri()){
+  const [{save},{writeFile}]=await Promise.all([import('@tauri-apps/plugin-dialog'),import('@tauri-apps/plugin-fs')]);
+  const extension=fileName.split('.').at(-1)??'txt';
+  const path=await save({defaultPath:fileName,filters:[{name:'Asset Doctor report',extensions:[extension,'txt']}]});
+  if(path===null||!stillCurrent())return 'cancelled';await writeFile(path,bytes);return 'saved';
+ }
+ if(!stillCurrent())return 'cancelled';
+ const url=URL.createObjectURL(new Blob([bytes],{type:'text/plain;charset=utf-8'})),anchor=document.createElement('a');
+ anchor.href=url;anchor.download=fileName;anchor.hidden=true;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);return 'downloaded';
 }
 
 /** True means a completed write; cancellation and unconfirmed browser downloads return false. */

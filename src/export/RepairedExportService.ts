@@ -118,7 +118,7 @@ export class RepairedExportService {
     const snapshots=this.collectMeshes(request.currentRoot).map(mesh=>({mesh,snapshot:captureGeometry(mesh.geometry)}));
     const source=request.source.kind==='buffer'?{...request.source,buffer:request.source.buffer.slice(0)}:request.source;
     const result=await this.compute.request<RepairedExportResult>({source,root:packRoot(request.currentRoot),assetName:request.assetName,
-      healReports:request.healReports,resourceBaseUrl:new URL('.',location.href).href});
+      healReports:request.healReports,resourceBaseUrl:new URL('.',location.href).href},{stage:'repair_export',assetId:request.currentRoot.uuid,asset:request.assetName});
     if(session!==repairedMeshFingerprint(request.currentRoot,request.healReports) || structure!==this.nodeStructureSignature(request.currentRoot) ||
        snapshots.some(({mesh,snapshot})=>!geometryMatches(mesh.geometry,snapshot)))throw new Error('export.errors.geometryChanged');
     result.performance.totalMs=nowMs()-startedAt;

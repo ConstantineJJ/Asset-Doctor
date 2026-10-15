@@ -7,6 +7,7 @@ test('Custom hotkeys reject conflicts, operate once and survive reload',async({p
  const assign=page.getByRole('button',{name:'Assign Wireframe',exact:true});
  await expect(assign).toBeVisible({timeout:2000});await assign.click();await assign.press('f');
  await expect(page.getByRole('alert')).toContainText('Frame all');
+ await test.info().attach('hotkey-settings.png',{body:await page.screenshot(),contentType:'image/png'});
  await assign.press('h');await expect(assign).toContainText('H');
  await page.getByRole('button',{name:'Close settings',exact:true}).click();
  await page.locator('body').click({position:{x:2,y:2}});await page.keyboard.press('h');

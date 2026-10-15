@@ -1,3 +1,6 @@
+import {SystemStatusBar} from './components/SystemStatusBar';
+import {buildDiagnosticReport,reportableFinding} from './diagnostics/DiagnosticReport';
+import {systemLog} from './platform/SystemLog';
 import {shortcuts,shortcutEventAllowed} from './platform/Shortcuts';
 import {AssetSession} from './session/AssetSession';
 import {ExportCoordinator} from './export/ExportCoordinator';
@@ -50,7 +53,7 @@ import { analyzeTransforms } from './analysis/TransformAnalyzer';
 import { analyzePerformance } from './analysis/PerformanceAnalyzer';
 import { analyzeNormalsAndUv } from './analysis/NormalsAndUvAnalyzer';
 import { inspectSkinInfluence } from './analysis/RigInspection';
-import { confirmRepairQueue, isDesktop, pickModelFiles, protectDesktopClose,saveBinaryFile } from './platform/FileIO';
+import { confirmRepairQueue, isDesktop, pickModelFiles, protectDesktopClose,saveBinaryFile,saveTextFile } from './platform/FileIO';
 import { disposeModelResources } from './loaders/ModelResources';
 import type {
   AnimationClipInfo,
@@ -85,6 +88,9 @@ export function App() {
   // Scene & Service instances
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const doctorActiveRef = useRef(true);
+  const [doctorActive,setDoctorActive]=useState(true);
+  const [diagnosticLogBusy,setDiagnosticLogBusy]=useState(false),diagnosticLogBusyRef=useRef(false);
+  const [diagnosticLogMessage,setDiagnosticLogMessage]=useState('');
   const loaderServiceRef = useRef<GLBLoaderService | null>(null);
   const workerManagerRef = useRef<WorkerManager | null>(null);
   const assetSessionRef=useRef(new AssetSession<THREE.Group,ExportSourceDescriptor>());
@@ -158,6 +164,7 @@ export function App() {
   const diagnosticProfileIdRef = useRef<DiagnosticProfileId>('general');
   const analysisRunIdRef = useRef(0);
   const analysisSnapshotRef = useRef<{
+    revision:number;
     summary: AssetSummary;
     materials: MaterialInfo[];
     textures: TextureInfo[];
@@ -386,6 +393,8 @@ export function App() {
       sizeBytes?: number
     ) => {
       const runId = ++analysisRunIdRef.current;
+      const operation=systemLog.begin('analysis',{asset:assetName,assetId:root.uuid,revision:runId});
+      try {
       const yieldAnalysisPhase = async () => {
         await new Promise<void>(resolve => setTimeout(resolve, 0));
         return runId === analysisRunIdRef.current;
@@ -423,6 +432,7 @@ export function App() {
       if (!await yieldAnalysisPhase()) return false;
 
       analysisSnapshotRef.current = {
+        revision:runId,
         summary: geomSummary,
         materials: mats,
         textures: texs,
@@ -475,10 +485,12 @@ export function App() {
             analysisSnapshotRef.current.topology = topologyResults;
           }
           rebuildDiagnosticReport(diagnosticProfileIdRef.current, topologyResults);
+          operation.end('completed',{count:healthIssuesRef.current.length});
           return true;
         } catch (err) {
           if (runId !== analysisRunIdRef.current) return false;
           console.warn('Topology worker error:', err);
+          operation.end('failed',{stage:'topology',error:err});
           setProgressiveState((prev) => ({ ...prev, topology: 'error' }));
           rebuildDiagnosticReport(diagnosticProfileIdRef.current);
           const topologyFailure: HealthIssue = {
@@ -501,7 +513,10 @@ export function App() {
           setHealthIssues(nextIssues);
         }
       }
+      operation.end('failed',{reason:'Topology worker unavailable'});
       return false;
+      } catch(error) {operation.end('failed',{error});throw error;}
+      finally {operation.end('cancelled',{reason:'Analysis superseded'});}
     },
     [rebuildDiagnosticReport]
   );
@@ -518,6 +533,8 @@ export function App() {
     ) => {
       setIsLoading(true);
       assetDetailsRef.current={name:assetName,size:sizeBytes};
+      setDiagnosticLogMessage('');
+      systemLog.record('info','asset','accepted',{asset:assetName,assetId:root.uuid,fileBytes:sizeBytes});
       assetSessionRef.current.replace(root,exportSource??null);
       performanceCore.resetForAsset(exportSource?.kind==='buffer'?exportSource.buffer.byteLength:0,estimateObjectGeometryBytes(root));
       if(loadDurationMs!==undefined)performanceCore.record('initialLoad',loadDurationMs);
@@ -593,6 +610,7 @@ export function App() {
     if(rigPublishedRevisionRef.current===session.revision)return;
     discardFitting();
     rigPublishedRevisionRef.current=session.revision;
+    systemLog.record('info','rig','changed',{assetId:root.uuid,revision:session.revision,mode:session.mode});
     if(rigUndoingRef.current)removeUndoDomain('rig');else undoOrderRef.current.push('rig');
     currentAnimationClipsRef.current=session.clips;
     exportCoordinatorRef.current.invalidate();setExportBusy(false);exportCoordinatorRef.current.clearResult();exportServiceRef.current?.cancelActive();
@@ -604,7 +622,7 @@ export function App() {
     void runAnalysisPipeline(root,session.clips,assetDetailsRef.current.name,assetDetailsRef.current.size);
   },[runAnalysisPipeline,discardFitting]);
   const handleDoctorActiveChange = useCallback((active:boolean) => {
-    doctorActiveRef.current = active;
+    doctorActiveRef.current = active;setDoctorActive(active);
     sceneManagerRef.current?.setActive(active);
   }, []);
   const handleCanvasMount = useCallback(
@@ -955,6 +973,7 @@ export function App() {
     if(!undo&&rigSessionRef.current?.hasJointIndexEdits) {
       setHealError(language==='ru'?'Сначала сохраните и заново откройте GLB после удаления сустава.':'Export and reimport the GLB after joint deletion before applying repairs.');return null;
     }
+    const operation=systemLog.begin(undo?'repair_undo':'repair',{asset:fileName,assetId:root.uuid});
     healBusyRef.current = true;
     setHealBusy(true);
     setHealError(null);
@@ -971,6 +990,7 @@ export function App() {
       if(assetSessionRef.current.root!==root)return null;
       if (!result.success) {
         const reason = result.reasonKey ? t(result.reasonKey) : result.reason ?? t('heal.blocked');
+        operation.end('failed',{reason});
         if (undo) setHealError(reason);
         else setHealPreview(previous => previous ? { ...previous, status: 'BLOCKED', reason, reasonKey: result.reasonKey } : null);
         return null;
@@ -995,11 +1015,14 @@ export function App() {
       if (!undo && result.report) engine.completeVerification(result.report.operationId, complete);
       if (undo && !complete) setHealError(t('heal.errors.undoAnalysis'));
       publishHealReport(engine);
+      operation.end(complete?'completed':'failed',{stage:'verification'});
       return engine.getLastOperation();
-    } catch {
+    } catch(error) {
+      operation.end('failed',{error});
       if (assetSessionRef.current.root === root) setHealError(t('heal.errors.operationFailed'));
       return null;
     } finally {
+      operation.end('cancelled',{reason:'Asset changed'});
       healBusyRef.current = false;
       setHealBusy(false);
     }
@@ -1209,6 +1232,7 @@ export function App() {
     setExportError(null);
     exportCoordinatorRef.current.clearResult();
     setExportReport(null);
+    const operation=systemLog.begin('repair_export',{asset:fileName,assetId:root.uuid,revision:request});
 
     try {
       const result = await service.exportAndVerifyInWorker({
@@ -1223,17 +1247,20 @@ export function App() {
       exportCoordinatorRef.current.publish(request,result);
       setExportReport(result.report);
 
+      operation.end(result.report.status==='VERIFIED'?'completed':'failed',{status:result.report.status});
       if (result.report.status !== 'VERIFIED') {
         setExportError(t('export.errors.verificationFailed'));
         return null;
       }
       return result;
     } catch (error) {
+      operation.end(error instanceof Error&&error.name==='AbortError'?'cancelled':'failed',{error});
       if (request !== exportCoordinatorRef.current.revision) return null;
       const key = error instanceof Error ? error.message : 'export.errors.failed';
       setExportError(t(key.startsWith('export.') ? key : 'export.errors.failed'));
       return null;
     } finally {
+      operation.end('cancelled',{reason:'Export superseded'});
       if(exportCoordinatorRef.current.finish(request))setExportBusy(false);
     }
   };
@@ -1244,17 +1271,21 @@ export function App() {
     setExportBusy(true);
     setExportError(null);
     const request=exportCoordinatorRef.current.begin();
+    const operation=systemLog.begin('repair_save',{asset:fileName,revision:request});
     try {
       const saved = await service.download(result,()=>exportCoordinatorRef.current.isCurrent(request)&&exportCoordinatorRef.current.result===result);
       // A save dialog can stay open while Undo or another asset invalidates it.
       if (!saved || exportCoordinatorRef.current.result !== result) return false;
       unsavedRepairsRef.current = false;
       setSavedExport(result);
+      operation.end('completed');
       return true;
     } catch (error) {
+      operation.end('failed',{error});
       setExportError(`${t('export.errors.saveFailed')}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
+      operation.end('cancelled',{reason:'Save cancelled or superseded'});
       if(exportCoordinatorRef.current.finish(request))setExportBusy(false);
     }
   };
@@ -1287,6 +1318,7 @@ export function App() {
     if(!session || !root || source?.kind!=='buffer' || exportCoordinatorRef.current.busy || healBusyRef.current || repairQueueRunningRef.current || rigDragging||fittingBusyRef.current)return false;
     setExportBusy(true);setRigError(null);
     const request=exportCoordinatorRef.current.begin(),revision=session.revision;
+    const operation=systemLog.begin(save?'rig_save':'rig_export',{asset:fileName,assetId:root.uuid,revision});
     const current=()=>request===exportCoordinatorRef.current.revision && root===assetSessionRef.current.root && session===rigSessionRef.current && session.revision===revision;
     try {
       const engine=healEngineRef.current!,reports=engine.getActiveReports();
@@ -1298,13 +1330,13 @@ export function App() {
         if(!current())return false;
         rigExportResultRef.current=result;setRigExportResult(result);
       }
-      if(result.verification.status!=='VERIFIED') {setRigError(result.verification.reasons.join('; '));return false;}
-      if(!save)return true;
+      if(result.verification.status!=='VERIFIED') {operation.end('failed',{status:result.verification.status,reason:result.verification.reasons.join('; ')});setRigError(result.verification.reasons.join('; '));return false;}
+      if(!save){operation.end('completed',{status:'VERIFIED'});return true;}
       if(!(await saveBinaryFile(result.fileName,result.buffer,()=>current()&&rigExportResultRef.current===result&&result!.stillCurrent())))return false;
       if(!current())return false;
-      setSavedRigExport(result);unsavedRepairsRef.current=false;return true;
-    } catch(error) {if(current())setRigError(error instanceof Error?error.message:String(error));return false;}
-    finally {if(exportCoordinatorRef.current.finish(request))setExportBusy(false);}
+      setSavedRigExport(result);unsavedRepairsRef.current=false;operation.end('completed',{status:'VERIFIED'});return true;
+    } catch(error) {operation.end(error instanceof Error&&error.name==='AbortError'?'cancelled':'failed',{error});if(current())setRigError(error instanceof Error?error.message:String(error));return false;}
+    finally {operation.end('cancelled',{reason:'Save cancelled or export superseded'});if(exportCoordinatorRef.current.finish(request))setExportBusy(false);}
   };
 
   const canExportRepaired = Boolean(
@@ -1480,12 +1512,13 @@ export function App() {
     if(assetSessionRef.current.source?.kind!=='buffer'||!/\.glb$/i.test(fileName)){setFittingError(language==='ru'?'Откройте самодостаточный GLB.':'Open a self-contained GLB.');return;}
     if(healEngineRef.current?.getActiveReports().length){setFittingError(language==='ru'?'Сначала сохраните и заново откройте проверенный ремонт.':'Save and reimport verified repairs before fitting.');return;}
     discardFitting();const request=++fittingRequestRef.current;fittingBusyRef.current=true;setFittingBusy(true);
+    const operation=systemLog.begin('rig_fitting',{asset:fileName,assetId:root.uuid,revision:session.revision});
     try {
       const review=await rigFittingServiceRef.current!.analyze(session,mesh=>manager.renderModeManager.authoredGeometry(mesh));
       if(request!==fittingRequestRef.current||session!==rigSessionRef.current||root!==assetSessionRef.current.root)return;
-      fittingReviewRef.current=review;setFittingReview(review);
-    }catch(error){if(request===fittingRequestRef.current)setFittingError(error instanceof Error?error.message:String(error));}
-    finally{if(request===fittingRequestRef.current){fittingBusyRef.current=false;setFittingBusy(false);}}
+      fittingReviewRef.current=review;setFittingReview(review);operation.end('completed',{count:review.proposals.length});
+    }catch(error){operation.end('failed',{error});if(request===fittingRequestRef.current)setFittingError(error instanceof Error?error.message:String(error));}
+    finally{operation.end('cancelled',{reason:'Fitting superseded'});if(request===fittingRequestRef.current){fittingBusyRef.current=false;setFittingBusy(false);}}
   };
   const handleApplyFitting=()=>{
     const review=fittingReviewRef.current;
@@ -1538,6 +1571,22 @@ export function App() {
   };
 
   // Ctrl+Z uses model histories; text fields retain their native text Undo.
+  const handleLogDiagnostics=async(issue?:HealthIssue)=>{
+    const root=assetSessionRef.current.root,issues=healthIssuesRef.current,revision=analysisRunIdRef.current;
+    if(!root||!doctorActiveRef.current||diagnosticLogBusyRef.current||analysisSnapshotRef.current?.revision!==revision||issue&&!issues.includes(issue))return;
+    const current=()=>root===assetSessionRef.current.root&&revision===analysisRunIdRef.current&&issues===healthIssuesRef.current;
+    diagnosticLogBusyRef.current=true;setDiagnosticLogBusy(true);setDiagnosticLogMessage('');
+    const operation=systemLog.begin('diagnostic_report',{asset:fileName,assetId:root.uuid,revision,mode:issue?'single':'all'});
+    try {
+      const output=buildDiagnosticReport({assetName:fileName,assetId:root.uuid,fileBytes:fileSizeBytes,scanRevision:revision,profileId:diagnosticProfileId,stages:progressiveState,
+        issues:issue?[issue]:issues,totalScanCards:issues.length,scope:issue?'single':'all',language});
+      const result=await saveTextFile(output.fileName,output.text,current);
+      if(current())setDiagnosticLogMessage((result==='saved'?(language==='ru'?'Отчёт сохранён.':'Report saved.'):result==='downloaded'?(language==='ru'?'Отчёт передан на скачивание.':'Report download requested.'):(language==='ru'?'Сохранение отменено.':'Save cancelled.'))+(output.report.omittedFindings?` · ${language==='ru'?'Не вошло из-за ограничения размера':'Omitted at size limit'}: ${output.report.omittedFindings}`:''));
+      operation.end(result==='cancelled'?'cancelled':'completed',{count:output.report.includedFindings,reason:output.report.omittedFindings?'Some findings omitted at report byte limit':undefined});
+    }catch(error){operation.end('failed',{error});if(current())setDiagnosticLogMessage((language==='ru'?'Не удалось сохранить отчёт: ':'Could not save report: ')+String(error));}
+    finally{diagnosticLogBusyRef.current=false;setDiagnosticLogBusy(false);}
+  };
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if(!shortcutEventAllowed(e)||pendingRigRemovalRef.current||pendingAssetSwitch||isTestModalOpen)return;
@@ -1545,6 +1594,7 @@ export function App() {
       if(action==='wireframe'){e.preventDefault();handleSetRenderMode(renderMode==='wireframe'?'pbr':'wireframe');return;}
       if(action==='skeleton'||action==='grid'){e.preventDefault();handleToggleHelper(action);return;}
       if(!doctorActiveRef.current)return;
+      if(action==='diagnosticLog'){e.preventDefault();void handleLogDiagnostics();return;}
       if(action==='undo') {
         e.preventDefault();
         if(e.repeat||rigDragging||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current||pendingAssetSwitch||isTestModalOpen||document.querySelector('[data-active-view="compare"]'))return;
@@ -1661,6 +1711,7 @@ export function App() {
 
         {/* Right: Technical Inspector & Diagnostic Panel */}
         <InspectorPanel
+          onLogIssue={issue=>void handleLogDiagnostics(issue)}
           animationClips={animationClips} activeClipIndex={activeClipIndex} onSelectClip={handleSelectClip} animationBusy={healBusy||exportBusy||rigDragging||repairQueueState.status==='running'} clipSourceKey={rigSessionRef.current?.root.uuid??fileName}
           rigEditor={<>{rigSessionRef.current?.hasSkeleton&&<RigFittingPanel appliedCount={appliedFit?.rootUuid===rigSessionRef.current?.root.uuid&&appliedFit.revision===rigSessionRef.current?.revision?appliedFit.count:undefined} onSelectAll={selected=>setFittingSelection(new Set(selected?fittingReview?.proposals.filter(p=>p.status==='suggested').map(p=>p.uuid):[]))} review={fittingReview} selected={fittingSelection} activeUuid={selectedUuid} busy={fittingBusy} blocked={!rigEditorProps.enabled||healBusy||exportBusy||rigDragging||Boolean(pendingRigRemoval)||repairQueueState.status==='running'} edit={rigSessionRef.current?.mode==='edit'} error={fittingError} onAnalyze={()=>void handleAnalyzeFitting()} onCancel={discardFitting} onApply={handleApplyFitting} onPick={uuid=>sceneManagerRef.current?.selectObject(uuid)} onToggle={(uuid,checked)=>setFittingSelection(previous=>{const next=new Set(previous);if(checked)next.add(uuid);else next.delete(uuid);return next;})}/>}<RigEditorPanel {...rigEditorProps} /></>}
           summary={summary}
@@ -1733,6 +1784,9 @@ export function App() {
         showRootMotion={showRootMotion}
         onToggleRootMotion={handleToggleRootMotion}
       />
+
+      <SystemStatusBar assetName={doctorActive?fileName:''} partial={Object.values(progressiveState).some(stage=>stage!=='done')} count={doctorActive?healthIssues.filter(reportableFinding).length:0}
+        enabled={doctorActive&&Boolean(assetSessionRef.current.root)&&analysisSnapshotRef.current?.revision===analysisRunIdRef.current} busy={diagnosticLogBusy} message={diagnosticLogMessage} onLogAll={()=>void handleLogDiagnostics()}/>
 
       {/* Topology Unit Test Verification Modal */}
       <TopologyTestModal

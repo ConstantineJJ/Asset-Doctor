@@ -51,7 +51,7 @@ export class RigFittingService {
    &&hierarchy.every(item=>item.node.parent===item.parent&&item.node.children.length===item.children.length&&item.children.every((child,i)=>child===item.node.children[i])&&local(item.node)===item.local)
    &&bindings.every(item=>item.mesh.skeleton===item.skeleton&&item.bones.length===item.skeleton.bones.length&&item.bones.every((bone,i)=>bone===item.skeleton.bones[i])&&binding(item.mesh)===item.state)
    &&meshes.every(({mesh,geometry,snapshot})=>geometrySource(mesh)===geometry&&geometryMatches(geometry,snapshot));
-  const result=await this.compute.request<RigFitResult>({root:packet});
+  const result=await this.compute.request<RigFitResult>({root:packet},{stage:'rig_fitting',assetId:session.root.uuid});
   if(!stillCurrent())throw new Error('Fitting analysis is stale. Analyze the current model again.');
   if(!result||!Array.isArray(result.proposals)||!Number.isInteger(result.vertices)||result.vertices<0)throw new Error('Fitting worker returned invalid proposals.');
   // Worker data is checked before it can become an authored command.

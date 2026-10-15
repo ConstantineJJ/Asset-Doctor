@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {SystemLogControl} from './SystemLogControl';
 import {createPortal} from 'react-dom';
 import {
   Box,
@@ -123,7 +124,8 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   };
 
   return (
-    <header className="h-12 bg-[#181a1e] border-b border-[#2a2d34] flex items-center gap-2 px-2 text-xs text-gray-200 select-none z-30 shrink-0 overflow-x-auto overflow-y-visible">
+    <header className="h-12 bg-[#181a1e] border-b border-[#2a2d34] flex items-center gap-2 pr-2 text-xs text-gray-200 select-none z-30 shrink-0">
+      <div className="flex-1 min-w-0 h-full flex items-center gap-2 px-2 overflow-x-auto overflow-y-hidden">
       <input
         ref={fileInputRef}
         type="file"
@@ -367,6 +369,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           </div>
         </div>
       </div>
+      </div><SystemLogControl/>
     </header>
   );
 };
