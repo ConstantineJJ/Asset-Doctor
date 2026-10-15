@@ -1,3 +1,4 @@
+import {shortcuts,shortcutEventAllowed} from './platform/Shortcuts';
 import {AssetSession} from './session/AssetSession';
 import {ExportCoordinator} from './export/ExportCoordinator';
 import {binaryBytes} from './performance/MemoryBudget';
@@ -1539,9 +1540,12 @@ export function App() {
   // Ctrl+Z uses model histories; text fields retain their native text Undo.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if(!doctorActiveRef.current||pendingRigRemovalRef.current)return;
-      if(e.defaultPrevented||e.isComposing||e.target instanceof HTMLElement&&(e.target.isContentEditable||e.target.closest('input,textarea,select')))return;
-      if(e.ctrlKey&&!e.altKey&&!e.shiftKey&&(e.code==='KeyZ'||e.key.toLowerCase()==='z')) {
+      if(!shortcutEventAllowed(e)||pendingRigRemovalRef.current||pendingAssetSwitch||isTestModalOpen)return;
+      const action=shortcuts.match(e);if(!action)return;
+      if(action==='wireframe'){e.preventDefault();handleSetRenderMode(renderMode==='wireframe'?'pbr':'wireframe');return;}
+      if(action==='skeleton'||action==='grid'){e.preventDefault();handleToggleHelper(action);return;}
+      if(!doctorActiveRef.current)return;
+      if(action==='undo') {
         e.preventDefault();
         if(e.repeat||rigDragging||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current||pendingAssetSwitch||isTestModalOpen||document.querySelector('[data-active-view="compare"]'))return;
         const session=rigSessionRef.current,heal=healEngineRef.current;
@@ -1554,15 +1558,12 @@ export function App() {
         if(session?.canUndo)handleUndoRig();else if(heal?.getUndoState().available)handleUndoHeal();
         return;
       }
-      if(e.ctrlKey||e.metaKey||e.altKey)return;
-      if (e.key === 'f' || e.key === 'F') {
-        handleFrameAll();
-      } else if (e.key === ' ') {
-        e.preventDefault();
-        handleTogglePlayAnimation();
-      } else if (e.key === 'z' || e.key === 'Z') {
-        handleSetRenderMode(renderMode === 'wireframe' ? 'pbr' : 'wireframe');
-      }
+      if(action==='frameAll'){e.preventDefault();handleFrameAll();}
+      else if(action==='focusSelected'){e.preventDefault();handleFocusSelected();}
+      else if(action==='playPause'){e.preventDefault();handleTogglePlayAnimation();}
+      else if(action==='redo'){e.preventDefault();if(rigSessionRef.current?.canRedo)handleRigAction(session=>session.redo());}
+      else if(action==='autoRotate'){e.preventDefault();handleToggleAutoRotate();}
+      else if(action==='openFile'){e.preventDefault();document.getElementById('btn-open-file')?.click();}
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);

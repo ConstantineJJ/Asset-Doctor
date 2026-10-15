@@ -3,6 +3,7 @@ import {createPortal} from 'react-dom';
 import {LogOut, Menu, Settings, X} from 'lucide-react';
 import {useI18n} from '../i18n';
 import {isDesktop, requestDesktopClose} from '../platform/FileIO';
+import {ShortcutSettings} from './ShortcutSettings';
 
 type Helper='grid'|'axes'|'bbox'|'skeleton'|'origin';
 interface Props {
@@ -70,10 +71,11 @@ export function ApplicationMenu({toggles,onToggleHelper}:Props){
       {error&&<p role="alert" className="p-2 text-red-300 break-words">{ru?'Не удалось закрыть приложение: ':'Could not close application: '}{error}</p>}
     </div>,document.body)}
     {settings&&createPortal(<dialog ref={dialog} aria-label={ru?'Настройки':'Settings'} onClose={()=>{setSettings(false);restoreFocus();}} onKeyDown={event=>event.stopPropagation()}
-      className="asset-doctor-ui m-auto w-[min(28rem,calc(100vw-2rem))] rounded-lg border border-[#687787] bg-[#252830] text-gray-100 p-5 shadow-xl backdrop:bg-black/60">
+      className="asset-doctor-ui m-auto w-[min(34rem,calc(100vw-2rem))] max-h-[85vh] overflow-y-auto rounded-lg border border-[#687787] bg-[#252830] text-gray-100 p-5 shadow-xl backdrop:bg-black/60">
       <div className="flex items-center justify-between mb-4"><h2 className="font-semibold">{ru?'Настройки':'Settings'}</h2><button aria-label={ru?'Закрыть настройки':'Close settings'} onClick={()=>dialog.current?.close()} className="p-1 rounded hover:bg-[#384552]"><X className="w-5 h-5"/></button></div>
       <label className="flex items-center justify-between gap-4 mb-4">{ru?'Язык интерфейса':'Interface language'}<select value={language} onChange={event=>setLanguage(event.target.value as 'en'|'ru')} className="rounded border border-[#687787] bg-[#252830] px-2 py-1"><option value="en">English</option><option value="ru">Русский</option></select></label>
       <div className="space-y-3">{(['skeleton','grid','axes','bbox','origin'] as Helper[]).map(helper=><label key={helper} className="flex items-center gap-3"><input type="checkbox" checked={toggles[helper]} onChange={()=>onToggleHelper(helper)} className="accent-cyan-400 w-4 h-4"/>{helperLabels[helper]}</label>)}</div>
+      <ShortcutSettings/>
     </dialog>,document.body)}
   </>;
 }

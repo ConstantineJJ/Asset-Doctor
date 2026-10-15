@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -46,30 +46,6 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
   showRootMotion,
   onToggleRootMotion,
 }) => {
-  // App historically registered Space with an effect that only depended on the
-  // render mode, so its closure could retain an old isPlaying value. Capture the
-  // shortcut here, where React always supplies the current callback, and stop the
-  // older bubbling listener from running a second toggle.
-  useEffect(() => {
-    if (!clips || clips.length === 0) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== ' ') return;
-      if (document.querySelector('[data-active-view="compare"]')) return;
-      if (
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLSelectElement ||
-        event.target instanceof HTMLTextAreaElement ||
-        (event.target instanceof HTMLElement && event.target.isContentEditable)
-      ) return;
-
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      onTogglePlay();
-    };
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [clips?.length, onTogglePlay]);
-
   if (!clips || clips.length === 0) return null;
 
   const activeClip = clips[activeClipIndex];

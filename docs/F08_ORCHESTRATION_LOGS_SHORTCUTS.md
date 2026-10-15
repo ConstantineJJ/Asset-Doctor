@@ -11,4 +11,10 @@
 - RED: три проверки обнаружили прежний неверный счёт backing buffers, пропуск Line и отсутствие isolated sink. После исправления unit/integration **339/339 PASS**, TypeScript PASS. Production focused **9/9 PASS, 41.7 с**, включая CSP/offline Draco, PARTIAL/REGRESSION/Undo, stale preview/export и 500 001 triangles performance/fidelity.
 - Один development запуск дал 8 PASS / 1 FAIL: production CSP блокирует Vite dev bootstrap, поэтому UI не появился. Это ошибка выбора режима harness; повтор сделан на свежем production build без ослабления CSP. Логи обоих запусков сохранены.
 
+## Increment 2: назначения горячих клавиш
+
+- Локальные сохраняемые назначения для Frame/Focus, Play/Pause, Wireframe, Undo, rig Redo, Open, Skeleton, Grid, Auto Rotate и будущих команд журналов. Settings: запись сочетания, отключение, reset и видимый отказ конфликта/недоступного сочетания/storage failure. Используются physical codes для русской раскладки.
+- Единственный Doctor shortcut handler; удалён захватывающий Space handler AnimationTimeline. Compare владеет своими Play/Frame/Rotation/Open; общий skeleton/render остаётся общим. Modal/input/composition/repeat и keyboard activation кнопок защищены.
+- TypeScript PASS; unit/integration **344/344 PASS**. Browser: новый тест сначала показал отсутствие назначения, затем custom/persistence/conflicts и modal/Compare playback **2/2 PASS**; ещё пять Compare usability проверок PASS. Первоначальный тест ошибочно ожидал Pause-state по умолчанию: fixture запускает клип автоматически; тест теперь явно останавливает воспроизведение до открытия Settings.
+
 Остальные increments и полная поставка в работе. Windows native EXE автоматически не запускается. F09 не включён.

@@ -1,3 +1,4 @@
+import {shortcuts,shortcutEventAllowed} from '../platform/Shortcuts';
 import {markStartup} from '../platform/StartupTrace';
 import {assertMemoryBytes,memoryLimits} from '../performance/MemoryBudget';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -220,7 +221,12 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!open) return;
+      if (!open||!shortcutEventAllowed(event)) return;
+      const action=shortcuts.match(event);
+      if(action==='playPause'){event.preventDefault();setPlaying(value=>!value);return;}
+      if(action==='frameAll'||action==='focusSelected'){event.preventDefault();managerRef.current?.resetCameras();return;}
+      if(action==='autoRotate'){event.preventDefault();setIsAutoRotating(value=>!value);return;}
+      if(action==='openFile'){event.preventDefault();void pickFiles();return;}
       if (event.key === 'Escape' && soloAssetId) {
         setSoloAssetId(null);
         managerRef.current?.setSoloAssetId(null);
@@ -228,7 +234,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, soloAssetId]);
+  });
 
   // Prevent default window drag/drop so dropping files does not trigger browser navigation
   useEffect(() => {

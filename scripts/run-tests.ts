@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import {runShortcutTests} from '../src/platform/ShortcutTests';
 import {runF08Tests} from '../src/performance/F08Tests';
 import {runMemoryBudgetTests} from '../src/performance/MemoryBudgetTests';
 import {runModelResourcesTests} from '../src/loaders/ModelResourcesTests';
@@ -28,6 +29,7 @@ import {
 
 async function main() {
   const results = [
+    ...runShortcutTests(),
     ...runF08Tests(),
     ...(await runMemoryBudgetTests()),
     ...runModelResourcesTests(),
