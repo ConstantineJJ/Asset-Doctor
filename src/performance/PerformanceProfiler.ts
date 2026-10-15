@@ -82,14 +82,13 @@ export function updateMemoryStats(
   };
 }
 
-export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
-  const seen = new Set<ArrayBufferLike>();
+export function estimateGeometryBytes(geometry: THREE.BufferGeometry,seen=new Set<ArrayBufferLike>()): number {
   let bytes = 0;
   const addAttribute = (attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute) => {
     const array = attribute.array;
     if (!seen.has(array.buffer)) {
       seen.add(array.buffer);
-      bytes += array.byteLength;
+      bytes += array.buffer.byteLength;
     }
   };
 
@@ -101,14 +100,12 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
 
 export function estimateObjectGeometryBytes(root: THREE.Object3D | null): number {
   if (!root) return 0;
-  const seen = new Set<THREE.BufferGeometry>();
+  const seen = new Set<ArrayBufferLike>();
   let bytes = 0;
   root.traverse((object) => {
-    if (!(object as THREE.Mesh).isMesh) return;
-    const geometry = (object as THREE.Mesh).geometry;
-    if (!geometry || seen.has(geometry)) return;
-    seen.add(geometry);
-    bytes += estimateGeometryBytes(geometry);
+    const drawable=object as THREE.Mesh|THREE.Line|THREE.Points;
+    if(!('geometry' in drawable)||!drawable.geometry?.isBufferGeometry)return;
+    bytes += estimateGeometryBytes(drawable.geometry,seen);
   });
   return bytes;
 }
@@ -168,6 +165,7 @@ class PerformanceCoreStore {
 
   public resetForAsset(sourceGlbBytes = 0, liveGeometryBytes = 0) {
     this.pendingAnalysis = null;
+    this.completedRoots.clear();
     this.profile = createEmptyPerformanceProfile();
     this.profile = updateMemoryStats(this.profile, { sourceGlbBytes, liveGeometryBytes });
     this.publish(this.profile);

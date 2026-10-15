@@ -2,15 +2,7 @@ import type { HealthIssue, HealOperationKind } from '../../types';
 import type { SurgicalHealEngine } from '../SurgicalHealEngine';
 import type { RepairOperationDefinition } from './RepairOperation';
 import * as THREE from 'three';
-import { nowMs, performanceCore } from '../../performance/PerformanceProfiler';
-import {
-  installSurgicalHealPerformanceInstrumentation,
-  syncSurgicalHealMemory,
-} from '../../performance/SurgicalHealPerformance';
-import { installExportPerformanceInstrumentation } from '../../performance/ExportPerformance';
-
-installSurgicalHealPerformanceInstrumentation();
-installExportPerformanceInstrumentation();
+import {nowMs} from '../../performance/PerformanceProfiler';
 
 const removeDegenerateTriangles: RepairOperationDefinition = {
   kind: 'remove-degenerate-triangles',
@@ -194,8 +186,7 @@ export function previewRepairIssue(
 
   const startedAt = nowMs();
   const preview = operation.preview(engine, root, issue);
-  performanceCore.record('repairPreview', nowMs() - startedAt);
-  syncSurgicalHealMemory(engine);
+  engine.recordPreview(nowMs()-startedAt);
   return preview;
 }
 
@@ -204,6 +195,6 @@ export async function previewRepairIssueAsync(engine:SurgicalHealEngine,root:THR
   if(!operation?.capabilities.preview || !issue.meshUuid)return null;
   const startedAt=nowMs();
   const preview=await engine.previewInWorker(root,issue.meshUuid,operation.kind,issue.id);
-  performanceCore.record('repairPreview',nowMs()-startedAt);syncSurgicalHealMemory(engine);
+  engine.recordPreview(nowMs()-startedAt);
   return preview;
 }

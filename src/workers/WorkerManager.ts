@@ -1,9 +1,10 @@
+import {noMetrics,type MetricsSink} from '../performance/MetricsSink';
 import * as THREE from 'three';
 import { analyzeMeshTopology, type RawMeshData } from '../analysis/TopologyAnalyzer';
 import type { TopologyPerformanceStats, TopologyStats } from '../types';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
 import { documentMatrix } from '../viewer/AssetPresentation';
-import { nowMs, performanceCore } from '../performance/PerformanceProfiler';
+import { nowMs } from '../performance/PerformanceProfiler';
 
 const WORKER_TASK_TIMEOUT_MS = 15000;
 import {workerInputBudget} from '../performance/MemoryBudget';
@@ -55,7 +56,7 @@ export class WorkerManager {
   private topologyCache = new WeakMap<THREE.Mesh, TopologyCacheEntry>();
   private activeAnalysisController: AbortController | null = null;
 
-  constructor() {
+  constructor(private readonly metrics:MetricsSink=noMetrics) {
     this.createWorker();
   }
 
@@ -136,7 +137,7 @@ export class WorkerManager {
     // its stale result later.
     if (this.activeAnalysisController) {
       this.activeAnalysisController.abort();
-      performanceCore.cancelAnalysisCycle();
+      this.metrics.cancelAnalysisCycle?.();
     }
     const controller = new AbortController();
     this.activeAnalysisController = controller;
@@ -147,7 +148,7 @@ export class WorkerManager {
     if (options.signal?.aborted) controller.abort();
     if (signal.aborted) throw abortError();
 
-    performanceCore.beginTopologyPhase(root.uuid);
+    this.metrics.beginTopologyPhase?.(root.uuid);
     const topologyStageStart = nowMs();
 
     try {
@@ -172,9 +173,9 @@ export class WorkerManager {
       const results: TopologyStats[] = [];
       if (meshes.length === 0) {
         options.onMetrics?.(metrics);
-        performanceCore.setTopology(metrics);
-        performanceCore.record('topologyWorker', nowMs() - topologyStageStart);
-        performanceCore.completeAnalysisCycle(root.uuid);
+        this.metrics.setTopology?.(metrics);
+        this.metrics.record('topologyWorker', nowMs() - topologyStageStart);
+        this.metrics.completeAnalysisCycle?.(root.uuid);
         return results;
       }
 
@@ -257,12 +258,12 @@ export class WorkerManager {
       }
 
       options.onMetrics?.(metrics);
-      performanceCore.setTopology(metrics);
-      performanceCore.record('topologyWorker', nowMs() - topologyStageStart);
-      performanceCore.completeAnalysisCycle(root.uuid);
+      this.metrics.setTopology?.(metrics);
+      this.metrics.record('topologyWorker', nowMs() - topologyStageStart);
+      this.metrics.completeAnalysisCycle?.(root.uuid);
       return results;
     } catch (error) {
-      if (isAbortError(error)) performanceCore.cancelAnalysisCycle(root.uuid);
+      if (isAbortError(error)) this.metrics.cancelAnalysisCycle?.(root.uuid);
       throw error;
     } finally {
       options.signal?.removeEventListener('abort', externalAbort);

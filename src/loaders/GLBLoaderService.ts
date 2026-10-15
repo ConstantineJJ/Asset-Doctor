@@ -5,9 +5,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import {
-  estimateObjectGeometryBytes,
   nowMs,
-  performanceCore,
 } from '../performance/PerformanceProfiler';
 import { auditGltfSource, type GltfSourceAudit } from './GltfSourceAudit';
 import { captureAuthoredMaterials } from '../viewer/AuthoredMaterialState';
@@ -15,6 +13,7 @@ import { captureSourceMetadata } from './AssetRuntimeMetadata';
 import { disposeModelResources,retainModelResources } from './ModelResources';
 
 export interface LoadedModelResult {
+  loadDurationMs?:number;
   fileName: string;
   fileSizeBytes?: number;
   root: THREE.Group;
@@ -124,16 +123,11 @@ export class GLBLoaderService {
 
     const result = await this.loadFromArrayBuffer(arrayBuffer, file.name, file.size, sourceAudit);
 
-    performanceCore.resetForAsset(
-      arrayBuffer.byteLength,
-      estimateObjectGeometryBytes(result.root)
-    );
-    performanceCore.record('initialLoad', nowMs() - startedAt);
 
     // GLTFLoader.parse does not mutate the source ArrayBuffer. Keep the original
     // buffer as the pristine export source instead of retaining an unnecessary
     // full-size copy beside it (important for multi-hundred-MB assets).
-    return { ...result, sourceBuffer: arrayBuffer, sourceAudit };
+    return { ...result, sourceBuffer: arrayBuffer, sourceAudit,loadDurationMs:nowMs()-startedAt };
   }
 
   public async loadFromArrayBuffer(

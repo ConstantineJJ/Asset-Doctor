@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { AssetSummary, BoundingBoxInfo, SceneNodeInfo } from '../types';
-import { performanceCore } from '../performance/PerformanceProfiler';
+import {noMetrics,type MetricsSink} from '../performance/MetricsSink';
 import { documentBounds } from '../viewer/AssetPresentation';
 
 export function calculateBoundingBox(object: THREE.Object3D): BoundingBoxInfo {
@@ -93,11 +93,12 @@ export function buildSceneTree(root: THREE.Object3D, parentId?: string): SceneNo
 export function analyzeAssetGeometry(
   root: THREE.Object3D,
   fileName: string,
-  fileSizeBytes?: number
+  fileSizeBytes?: number,
+  metrics:MetricsSink=noMetrics
 ): AssetSummary {
   // This becomes a committed profiling cycle only if WorkerManager follows with
   // the heavy topology stage; export-only geometry summaries do not pollute F1.
-  performanceCore.noteGeometryPassStart(root.uuid);
+  metrics.noteGeometryPassStart?.(root.uuid);
 
   let nodeCount = 0;
   let meshCount = 0;

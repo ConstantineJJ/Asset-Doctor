@@ -1,3 +1,7 @@
+import {AssetSession} from './session/AssetSession';
+import {ExportCoordinator} from './export/ExportCoordinator';
+import {binaryBytes} from './performance/MemoryBudget';
+import {performanceCore,estimateObjectGeometryBytes} from './performance/PerformanceProfiler';
 import {markStartup} from './platform/StartupTrace';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -82,15 +86,16 @@ export function App() {
   const doctorActiveRef = useRef(true);
   const loaderServiceRef = useRef<GLBLoaderService | null>(null);
   const workerManagerRef = useRef<WorkerManager | null>(null);
-  const currentAssetRootRef = useRef<THREE.Group | null>(null);
+  const assetSessionRef=useRef(new AssetSession<THREE.Group,ExportSourceDescriptor>());
   const currentAnimationClipsRef = useRef<THREE.AnimationClip[]>([]);
   const healEngineRef = useRef<SurgicalHealEngine | null>(null);
   const exportServiceRef = useRef<RepairedExportService | null>(null);
-  const currentExportSourceRef = useRef<ExportSourceDescriptor | null>(null);
-  const exportResultRef = useRef<RepairedExportResult | null>(null);
-  const loadRequestRef = useRef(0);
-  const exportRequestRef = useRef(0);
-  const exportBusyRef = useRef(false);
+
+
+
+
+
+  const exportCoordinatorRef=useRef(new ExportCoordinator<RepairedExportResult>());
   const pickingFileRef = useRef(false);
   const unsavedRepairsRef = useRef(false);
   const rigSessionRef=useRef<RigEditSession|null>(null);
@@ -129,10 +134,10 @@ export function App() {
   useEffect(()=>()=>rigFittingServiceRef.current?.cancel(),[]);
   const [savedExport, setSavedExport] = useState<RepairedExportResult | null>(null);
   if (!healEngineRef.current) {
-    healEngineRef.current = new SurgicalHealEngine();
+    healEngineRef.current = new SurgicalHealEngine(undefined,performanceCore);
   }
   if (!exportServiceRef.current) {
-    exportServiceRef.current = new RepairedExportService();
+    exportServiceRef.current = new RepairedExportService(undefined,false,performanceCore);
   }
 
   // App States
@@ -258,11 +263,12 @@ export function App() {
   // Initialize Loader & Worker Services
   useEffect(() => {
     loaderServiceRef.current = new GLBLoaderService();
-    workerManagerRef.current = new WorkerManager();
+    workerManagerRef.current = new WorkerManager(performanceCore);
 
     return () => {
-      loadRequestRef.current++;
-      exportRequestRef.current++;
+      assetSessionRef.current.beginLoad();
+      exportCoordinatorRef.current.invalidate();
+      assetSessionRef.current.clear();
       loaderServiceRef.current?.dispose();
       loaderServiceRef.current = null;
       workerManagerRef.current?.dispose();
@@ -272,6 +278,8 @@ export function App() {
       rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;
     };
   }, []);
+
+  useEffect(()=>{performanceCore.setMemory({exportBufferBytes:binaryBytes([exportCoordinatorRef.current.result?.buffer,savedExport?.buffer,rigExportResult?.buffer,savedRigExport?.buffer])});},[exportReport,savedExport,rigExportResult,savedRigExport]);
 
   // Build Scene Hierarchy Tree
   const buildSceneTree = (object: THREE.Object3D): SceneNodeInfo => {
@@ -394,7 +402,8 @@ export function App() {
       });
 
       // 1. Synchronous analysis
-      const geomSummary = analyzeGeometry(root, assetName, sizeBytes);
+      const geomSummary = analyzeGeometry(root, assetName, sizeBytes,performanceCore);
+      performanceCore.setMemory({liveGeometryBytes:estimateObjectGeometryBytes(root)});
       const mats = analyzeMaterials(root);
       const texs = analyzeTextures(root);
       const skel = analyzeSkeleton(root);
@@ -503,16 +512,20 @@ export function App() {
       clips: THREE.AnimationClip[],
       assetName: string,
       sizeBytes?: number,
-      exportSource?: ExportSourceDescriptor
+      exportSource?: ExportSourceDescriptor,
+      loadDurationMs?:number
     ) => {
       setIsLoading(true);
       assetDetailsRef.current={name:assetName,size:sizeBytes};
-      currentAssetRootRef.current = root;
+      assetSessionRef.current.replace(root,exportSource??null);
+      performanceCore.resetForAsset(exportSource?.kind==='buffer'?exportSource.buffer.byteLength:0,estimateObjectGeometryBytes(root));
+      if(loadDurationMs!==undefined)performanceCore.record('initialLoad',loadDurationMs);
       currentAnimationClipsRef.current = clips;
-      currentExportSourceRef.current = exportSource ?? null;
+
       unsavedRepairsRef.current = false;
-      exportResultRef.current = null;
-      exportRequestRef.current++;
+      exportCoordinatorRef.current.clearResult();
+      exportCoordinatorRef.current.invalidate();
+      setExportBusy(false);
       setSavedExport(null);
       setExportReport(null);
       setExportError(null);
@@ -573,7 +586,7 @@ export function App() {
 
   // Mount an empty viewport. Built-in specimens remain available from Examples.
   const publishRigChange=useCallback(()=>{
-    const session=rigSessionRef.current,root=currentAssetRootRef.current;
+    const session=rigSessionRef.current,root=assetSessionRef.current.root;
     if(!session || !root) return;
     setTreeRoot(buildSceneTree(root));setRigVersion(value=>value+1);
     if(rigPublishedRevisionRef.current===session.revision)return;
@@ -581,7 +594,7 @@ export function App() {
     rigPublishedRevisionRef.current=session.revision;
     if(rigUndoingRef.current)removeUndoDomain('rig');else undoOrderRef.current.push('rig');
     currentAnimationClipsRef.current=session.clips;
-    exportRequestRef.current++;exportResultRef.current=null;exportServiceRef.current?.cancelActive();
+    exportCoordinatorRef.current.invalidate();setExportBusy(false);exportCoordinatorRef.current.clearResult();exportServiceRef.current?.cancelActive();
     setSavedExport(null);setExportReport(null);setExportError(null);
     rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;setRigExportResult(null);setSavedRigExport(null);
     unsavedRepairsRef.current=session.hasEdits || (healEngineRef.current?.getActiveReports().length??0)>0;
@@ -650,23 +663,23 @@ export function App() {
       setSelectedNode(null);
     }
 
-    const root = currentAssetRootRef.current;
+    const root = assetSessionRef.current.root;
     setSkinInfluenceSummary(root ? inspectSkinInfluence(root, selectedUuid) : null);
   }, [selectedUuid, treeRoot]);
 
   // File Handlers
   const openFileNow = async (file: File) => {
     if (!loaderServiceRef.current) return;
-    const request = ++loadRequestRef.current;
-    const repairRevision = exportRequestRef.current;
+    const request = assetSessionRef.current.beginLoad();
+    const repairRevision = exportCoordinatorRef.current.revision;
     try {
       setIsLoading(true);
       const result = await loaderServiceRef.current.loadFromFile(file);
-      if (request !== loadRequestRef.current) {
+      if (request !== assetSessionRef.current.loadRevision) {
         disposeModelResources(result.root);
         return;
       }
-      if (unsavedRepairsRef.current && repairRevision !== exportRequestRef.current) {
+      if (unsavedRepairsRef.current && repairRevision !== exportCoordinatorRef.current.revision) {
         disposeModelResources(result.root);
         setIsLoading(false);
         setPendingAssetSwitch({ kind: 'file', file });
@@ -679,10 +692,11 @@ export function App() {
         result.fileSizeBytes,
         result.sourceBuffer
           ? { kind: 'buffer', fileName: result.fileName, buffer: result.sourceBuffer }
-          : undefined
+          : undefined,
+        result.loadDurationMs
       );
     } catch (err) {
-      if (request !== loadRequestRef.current) return;
+      if (request !== assetSessionRef.current.loadRevision) return;
       alert(`Error loading 3D file: ${err instanceof Error ? err.message : String(err)}`);
       setIsLoading(false);
     }
@@ -690,7 +704,7 @@ export function App() {
 
   const selectSampleNow = async (sampleId: string) => {
     if (sampleId !== 'test-patient') return;
-    loadRequestRef.current++;
+    assetSessionRef.current.beginLoad();
     const sample = createAssetDoctorTestPatient();
     await loadAsset(
       sample.root,
@@ -804,8 +818,8 @@ export function App() {
 
   // Camera Handlers
   const handleFrameAll = () => {
-    if (currentAssetRootRef.current && sceneManagerRef.current) {
-      sceneManagerRef.current.cameraController.frameObject(currentAssetRootRef.current);
+    if (assetSessionRef.current.root && sceneManagerRef.current) {
+      sceneManagerRef.current.cameraController.frameObject(assetSessionRef.current.root);
     }
   };
 
@@ -831,22 +845,22 @@ export function App() {
 
   const handleToggleVisibility = (uuid: string) => {
     sceneManagerRef.current?.toggleObjectVisibility(uuid);
-    if (currentAssetRootRef.current) {
-      setTreeRoot(buildSceneTree(currentAssetRootRef.current));
+    if (assetSessionRef.current.root) {
+      setTreeRoot(buildSceneTree(assetSessionRef.current.root));
     }
   };
 
   const handleIsolateNode = (uuid: string) => {
     sceneManagerRef.current?.isolateObject(uuid);
-    if (currentAssetRootRef.current) {
-      setTreeRoot(buildSceneTree(currentAssetRootRef.current));
+    if (assetSessionRef.current.root) {
+      setTreeRoot(buildSceneTree(assetSessionRef.current.root));
     }
   };
 
   const handleShowAll = () => {
     sceneManagerRef.current?.showAllObjects();
-    if (currentAssetRootRef.current) {
-      setTreeRoot(buildSceneTree(currentAssetRootRef.current));
+    if (assetSessionRef.current.root) {
+      setTreeRoot(buildSceneTree(assetSessionRef.current.root));
     }
   };
 
@@ -873,7 +887,7 @@ export function App() {
 
   // Surgical Heal v0.2
   const refreshAfterHeal = async () => {
-    const root = currentAssetRootRef.current;
+    const root = assetSessionRef.current.root;
     if (!root) return;
 
     sceneManagerRef.current?.cancelIssueInspection();
@@ -892,14 +906,14 @@ export function App() {
   };
 
   const handlePreviewHeal = async (issue: HealthIssue) => {
-    const root = currentAssetRootRef.current;
+    const root = assetSessionRef.current.root;
     const engine = healEngineRef.current;
     if (!root || !engine || healBusyRef.current) return;
 
     healBusyRef.current=true;setHealBusy(true);
     try {
     const preview = await previewRepairIssueAsync(engine, root, issue);
-    if(root!==currentAssetRootRef.current)return;
+    if(root!==assetSessionRef.current.root)return;
     if (!preview) return;
 
     setHealPreview(preview);
@@ -908,7 +922,7 @@ export function App() {
       handleFocusIssue(issue);
     }
     } catch(error) {
-      if(root===currentAssetRootRef.current && (error as Error)?.name!=='AbortError')setHealError(t('heal.errors.operationFailed'));
+      if(root===assetSessionRef.current.root && (error as Error)?.name!=='AbortError')setHealError(t('heal.errors.operationFailed'));
     } finally {healBusyRef.current=false;setHealBusy(false);}
   };
 
@@ -934,7 +948,7 @@ export function App() {
 
   const performHeal = async (undo: boolean): Promise<HealOperationReport | null> => {
     if(fittingBusyRef.current)return null;
-    const root = currentAssetRootRef.current;
+    const root = assetSessionRef.current.root;
     const engine = healEngineRef.current;
     if (!root || !engine || healBusyRef.current) return null;
     if(!undo&&rigSessionRef.current?.hasJointIndexEdits) {
@@ -943,16 +957,17 @@ export function App() {
     healBusyRef.current = true;
     setHealBusy(true);
     setHealError(null);
-    exportResultRef.current = null;
+    exportCoordinatorRef.current.clearResult();
     exportServiceRef.current?.cancelActive();
     rigExportServiceRef.current?.cancelActive();rigExportResultRef.current=null;setRigExportResult(null);setSavedRigExport(null);
-    exportRequestRef.current++;
+    exportCoordinatorRef.current.invalidate();
+    setExportBusy(false);
     setSavedExport(null);
     setExportReport(null);
     setExportError(null);
     try {
       const result = undo ? engine.undoLast(root) : await engine.applyPendingAsync(root, fileName);
-      if(currentAssetRootRef.current!==root)return null;
+      if(assetSessionRef.current.root!==root)return null;
       if (!result.success) {
         const reason = result.reasonKey ? t(result.reasonKey) : result.reason ?? t('heal.blocked');
         if (undo) setHealError(reason);
@@ -965,7 +980,7 @@ export function App() {
       publishHealReport(engine);
 
       await new Promise<void>(resolve=>setTimeout(resolve,0));
-      if(currentAssetRootRef.current!==root)return null;
+      if(assetSessionRef.current.root!==root)return null;
       let complete = false;
       try {
         complete = (await refreshAfterHeal()) === true;
@@ -974,14 +989,14 @@ export function App() {
       }
 
       // An old analysis completion must never certify or overwrite a newer asset/report.
-      if (currentAssetRootRef.current !== root) return null;
+      if (assetSessionRef.current.root !== root) return null;
 
       if (!undo && result.report) engine.completeVerification(result.report.operationId, complete);
       if (undo && !complete) setHealError(t('heal.errors.undoAnalysis'));
       publishHealReport(engine);
       return engine.getLastOperation();
     } catch {
-      if (currentAssetRootRef.current === root) setHealError(t('heal.errors.operationFailed'));
+      if (assetSessionRef.current.root === root) setHealError(t('heal.errors.operationFailed'));
       return null;
     } finally {
       healBusyRef.current = false;
@@ -1019,7 +1034,7 @@ export function App() {
   };
 
   const handleRescan = async () => {
-    const root = currentAssetRootRef.current;
+    const root = assetSessionRef.current.root;
     if (!root || isLoading || healBusyRef.current || repairQueueState.status === 'running') return;
     setHealError(null);
     await runAnalysisPipeline(root, currentAnimationClipsRef.current, fileName, fileSizeBytes);
@@ -1027,7 +1042,7 @@ export function App() {
   };
 
   const handlePreviewNextRepairQueue = async () => {
-    const root = currentAssetRootRef.current;
+    const root = assetSessionRef.current.root;
     const engine = healEngineRef.current;
     if (!root || !engine || healBusyRef.current || repairQueueState.status === 'running') return;
 
@@ -1036,7 +1051,7 @@ export function App() {
     const candidates = buildRepairQueueCandidates(healthIssuesRef.current);
     for (const candidate of candidates) {
       const preview = await previewRepairIssueAsync(engine, root, candidate.issue);
-      if(root!==currentAssetRootRef.current)return;
+      if(root!==assetSessionRef.current.root)return;
       if (!preview) continue;
       setHealPreview(preview);
       if (preview.status === 'READY') {
@@ -1045,7 +1060,7 @@ export function App() {
       }
     }
     } catch(error) {
-      if(root===currentAssetRootRef.current && (error as Error)?.name!=='AbortError')setHealError(t('heal.errors.operationFailed'));
+      if(root===assetSessionRef.current.root && (error as Error)?.name!=='AbortError')setHealError(t('heal.errors.operationFailed'));
     } finally {healBusyRef.current=false;setHealBusy(false);}
   };
 
@@ -1060,7 +1075,7 @@ export function App() {
   };
 
   const handleRunSafeRepairQueue = async () => {
-    const root = currentAssetRootRef.current;
+    const root = assetSessionRef.current.root;
     const engine = healEngineRef.current;
     if (
       !root ||
@@ -1085,14 +1100,14 @@ export function App() {
     }
 
     const analysisRevision = analysisRunIdRef.current;
-    const repairRevision = exportRequestRef.current;
+    const repairRevision = exportCoordinatorRef.current.revision;
     repairQueueConfirmingRef.current = true;
     let confirmed = false;
     try {
       confirmed = await confirmRepairQueue(t('heal.queue.confirm', { count: initialCandidates.length }));
     } catch {
-      if (currentAssetRootRef.current === root && analysisRunIdRef.current === analysisRevision &&
-          exportRequestRef.current === repairRevision) {
+      if (assetSessionRef.current.root === root && analysisRunIdRef.current === analysisRevision &&
+          exportCoordinatorRef.current.revision === repairRevision) {
         setRepairQueueState({ status: 'failed', completed: 0, skipped: 0,
           remaining: initialCandidates.length, stopReason: t('heal.queue.confirmFailed') });
       }
@@ -1103,8 +1118,8 @@ export function App() {
 
     // A native dialog awaits asynchronously. Approval of an old asset/analysis
     // must not authorize the current session, and two clicks must not open two dialogs.
-    if (confirmed !== true || currentAssetRootRef.current !== root ||
-        analysisRunIdRef.current !== analysisRevision || exportRequestRef.current !== repairRevision ||
+    if (confirmed !== true || assetSessionRef.current.root !== root ||
+        analysisRunIdRef.current !== analysisRevision || exportCoordinatorRef.current.revision !== repairRevision ||
         repairQueueRunningRef.current || healBusyRef.current) return;
     repairQueueRunningRef.current = true;
     repairQueueStopRef.current = false;
@@ -1141,7 +1156,7 @@ export function App() {
             return await performHeal(false);
           },
           shouldStop: () => repairQueueStopRef.current,
-          assetStillCurrent: () => currentAssetRootRef.current === root,
+          assetStillCurrent: () => assetSessionRef.current.root === root,
           yieldControl: () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
         },
         (progress) => {
@@ -1173,11 +1188,11 @@ export function App() {
   // Export Repaired Copy v0.1
   const handleBuildRepairedExport = async (): Promise<RepairedExportResult | null> => {
     if(rigSessionRef.current?.hasEdits) {await handleRigExport(false);return null;}
-    const root = currentAssetRootRef.current;
-    const source = currentExportSourceRef.current;
+    const root = assetSessionRef.current.root;
+    const source = assetSessionRef.current.source;
     const engine = healEngineRef.current;
     const service = exportServiceRef.current;
-    if (!root || !source || !engine || !service || exportBusyRef.current || healBusyRef.current || repairQueueRunningRef.current) {
+    if (!root || !source || !engine || !service || exportCoordinatorRef.current.busy || healBusyRef.current || repairQueueRunningRef.current) {
       setExportError(t('export.errors.unavailable'));
       return null;
     }
@@ -1189,10 +1204,9 @@ export function App() {
     }
 
     setExportBusy(true);
-    exportBusyRef.current = true;
-    const request = ++exportRequestRef.current;
+    const request = exportCoordinatorRef.current.begin();
     setExportError(null);
-    exportResultRef.current = null;
+    exportCoordinatorRef.current.clearResult();
     setExportReport(null);
 
     try {
@@ -1203,9 +1217,9 @@ export function App() {
         healReports: preflight.reports,
       });
 
-      if (request !== exportRequestRef.current || root !== currentAssetRootRef.current) return null;
+      if (request !== exportCoordinatorRef.current.revision || root !== assetSessionRef.current.root) return null;
 
-      exportResultRef.current = result;
+      exportCoordinatorRef.current.publish(request,result);
       setExportReport(result.report);
 
       if (result.report.status !== 'VERIFIED') {
@@ -1214,26 +1228,25 @@ export function App() {
       }
       return result;
     } catch (error) {
-      if (request !== exportRequestRef.current) return null;
+      if (request !== exportCoordinatorRef.current.revision) return null;
       const key = error instanceof Error ? error.message : 'export.errors.failed';
       setExportError(t(key.startsWith('export.') ? key : 'export.errors.failed'));
       return null;
     } finally {
-      exportBusyRef.current = false;
-      setExportBusy(false);
+      if(exportCoordinatorRef.current.finish(request))setExportBusy(false);
     }
   };
 
   const saveRepairedExport = async (result: RepairedExportResult): Promise<boolean> => {
     const service = exportServiceRef.current;
-    if (!service || exportBusyRef.current || exportResultRef.current !== result) return false;
-    exportBusyRef.current = true;
+    if (!service || exportCoordinatorRef.current.busy || exportCoordinatorRef.current.result !== result) return false;
     setExportBusy(true);
     setExportError(null);
+    const request=exportCoordinatorRef.current.begin();
     try {
-      const saved = await service.download(result,()=>exportResultRef.current===result);
+      const saved = await service.download(result,()=>exportCoordinatorRef.current.isCurrent(request)&&exportCoordinatorRef.current.result===result);
       // A save dialog can stay open while Undo or another asset invalidates it.
-      if (!saved || exportResultRef.current !== result) return false;
+      if (!saved || exportCoordinatorRef.current.result !== result) return false;
       unsavedRepairsRef.current = false;
       setSavedExport(result);
       return true;
@@ -1241,13 +1254,12 @@ export function App() {
       setExportError(`${t('export.errors.saveFailed')}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
-      exportBusyRef.current = false;
-      setExportBusy(false);
+      if(exportCoordinatorRef.current.finish(request))setExportBusy(false);
     }
   };
 
   const handleDownloadRepairedExport = async () => {
-    const result = exportResultRef.current;
+    const result = exportCoordinatorRef.current.result;
     if (!result || result.report.status !== 'VERIFIED') return;
     await saveRepairedExport(result);
   };
@@ -1257,7 +1269,7 @@ export function App() {
     const service = exportServiceRef.current;
     if (!service || exportBusy) return;
 
-    const cached = exportResultRef.current;
+    const cached = exportCoordinatorRef.current.result;
     if (cached?.report.status === 'VERIFIED') {
       await saveRepairedExport(cached);
       return;
@@ -1270,11 +1282,11 @@ export function App() {
   };
 
   const handleRigExport=async(save:boolean):Promise<boolean>=>{
-    const session=rigSessionRef.current,source=currentExportSourceRef.current,root=currentAssetRootRef.current;
-    if(!session || !root || source?.kind!=='buffer' || exportBusyRef.current || healBusyRef.current || repairQueueRunningRef.current || rigDragging||fittingBusyRef.current)return false;
-    exportBusyRef.current=true;setExportBusy(true);setRigError(null);
-    const request=++exportRequestRef.current,revision=session.revision;
-    const current=()=>request===exportRequestRef.current && root===currentAssetRootRef.current && session===rigSessionRef.current && session.revision===revision;
+    const session=rigSessionRef.current,source=assetSessionRef.current.source,root=assetSessionRef.current.root;
+    if(!session || !root || source?.kind!=='buffer' || exportCoordinatorRef.current.busy || healBusyRef.current || repairQueueRunningRef.current || rigDragging||fittingBusyRef.current)return false;
+    setExportBusy(true);setRigError(null);
+    const request=exportCoordinatorRef.current.begin(),revision=session.revision;
+    const current=()=>request===exportCoordinatorRef.current.revision && root===assetSessionRef.current.root && session===rigSessionRef.current && session.revision===revision;
     try {
       const engine=healEngineRef.current!,reports=engine.getActiveReports();
       if(reports.length&&!engine.validateCurrentVerifiedSession(root).ok)throw new Error('Repair session is no longer verified.');
@@ -1291,7 +1303,7 @@ export function App() {
       if(!current())return false;
       setSavedRigExport(result);unsavedRepairsRef.current=false;return true;
     } catch(error) {if(current())setRigError(error instanceof Error?error.message:String(error));return false;}
-    finally {exportBusyRef.current=false;setExportBusy(false);}
+    finally {if(exportCoordinatorRef.current.finish(request))setExportBusy(false);}
   };
 
   const canExportRepaired = Boolean(
@@ -1301,11 +1313,11 @@ export function App() {
     activeRepairReports.every(
       (report) => report.status === 'VERIFIED' && report.pipeline === 'complete' && !report.undoneAt
     ) &&
-    currentExportSourceRef.current
+    assetSessionRef.current.source
   );
   const hasUnsavedRepairs = Boolean(
     (activeRepairReports.length > 0 || rigSessionRef.current?.hasEdits) &&
-    (!savedExport || savedExport !== exportResultRef.current) &&
+    (!savedExport || savedExport !== exportCoordinatorRef.current.result) &&
     (!savedRigExport || savedRigExport!==rigExportResultRef.current)
   );
   unsavedRepairsRef.current = hasUnsavedRepairs;
@@ -1319,7 +1331,7 @@ export function App() {
 
   const requestOpenFile = (file: File) => {
     if (unsavedRepairsRef.current) {
-      loadRequestRef.current++;
+      assetSessionRef.current.beginLoad();
       setIsLoading(false);
       setPendingAssetSwitch({ kind: 'file', file });
       return;
@@ -1342,7 +1354,7 @@ export function App() {
 
   const requestSelectSample = (sampleId: string) => {
     if (unsavedRepairsRef.current) {
-      loadRequestRef.current++;
+      assetSessionRef.current.beginLoad();
       setIsLoading(false);
       setPendingAssetSwitch({ kind: 'sample', sampleId });
       return;
@@ -1402,7 +1414,7 @@ export function App() {
   const handleSelectClip = (idx: number) => {
     if (!Number.isInteger(idx) || idx < 0 || idx >= animationClips.length) return;
     const manager = sceneManagerRef.current;
-    if (!manager || rigDragging || healBusyRef.current || exportBusyRef.current || !manager.selectAnimationClip(idx)) return;
+    if (!manager || rigDragging || healBusyRef.current || exportCoordinatorRef.current.busy || !manager.selectAnimationClip(idx)) return;
 
     setActiveClipIndex(idx);
     setAnimationTime(0);
@@ -1454,7 +1466,7 @@ export function App() {
 
   const handleRigAction=(action:(session:RigEditSession)=>void,undo=false)=>{
     const session=rigSessionRef.current;
-    if(!session||pendingRigRemovalRef.current||fittingBusyRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    if(!session||pendingRigRemovalRef.current||fittingBusyRef.current||rigDragging||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current)return;
     setRigContext(null);setRigError(null);sceneManagerRef.current?.detachRigMixer();rigUndoingRef.current=undo;
     try {action(session);sceneManagerRef.current?.refreshRigStructure();sceneManagerRef.current?.syncRigClips();publishRigChange();}
     catch(error){sceneManagerRef.current?.syncRigClips();setRigError(jointDeleteMessage(error instanceof Error?error.message:String(error),language));}
@@ -1462,14 +1474,14 @@ export function App() {
   };
   const handleUndoRig=()=>handleRigAction(session=>session.undo(),true);
   const handleAnalyzeFitting=async()=>{
-    const session=rigSessionRef.current,root=currentAssetRootRef.current,manager=sceneManagerRef.current;
-    if(!session||!root||!manager||fittingBusyRef.current||pendingRigRemovalRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
-    if(currentExportSourceRef.current?.kind!=='buffer'||!/\.glb$/i.test(fileName)){setFittingError(language==='ru'?'Откройте самодостаточный GLB.':'Open a self-contained GLB.');return;}
+    const session=rigSessionRef.current,root=assetSessionRef.current.root,manager=sceneManagerRef.current;
+    if(!session||!root||!manager||fittingBusyRef.current||pendingRigRemovalRef.current||rigDragging||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current)return;
+    if(assetSessionRef.current.source?.kind!=='buffer'||!/\.glb$/i.test(fileName)){setFittingError(language==='ru'?'Откройте самодостаточный GLB.':'Open a self-contained GLB.');return;}
     if(healEngineRef.current?.getActiveReports().length){setFittingError(language==='ru'?'Сначала сохраните и заново откройте проверенный ремонт.':'Save and reimport verified repairs before fitting.');return;}
     discardFitting();const request=++fittingRequestRef.current;fittingBusyRef.current=true;setFittingBusy(true);
     try {
       const review=await rigFittingServiceRef.current!.analyze(session,mesh=>manager.renderModeManager.authoredGeometry(mesh));
-      if(request!==fittingRequestRef.current||session!==rigSessionRef.current||root!==currentAssetRootRef.current)return;
+      if(request!==fittingRequestRef.current||session!==rigSessionRef.current||root!==assetSessionRef.current.root)return;
       fittingReviewRef.current=review;setFittingReview(review);
     }catch(error){if(request===fittingRequestRef.current)setFittingError(error instanceof Error?error.message:String(error));}
     finally{if(request===fittingRequestRef.current){fittingBusyRef.current=false;setFittingBusy(false);}}
@@ -1488,7 +1500,7 @@ export function App() {
     discardFitting();
     setRigError(null);setRigContext(null);
     try {
-      const source=currentExportSourceRef.current,session=rigSessionRef.current;
+      const source=assetSessionRef.current.source,session=rigSessionRef.current;
       if(mode==='edit'&&session&&source?.kind==='buffer')buildRigExportPacket(session,source.buffer,healEngineRef.current?.getActiveReports(),mesh=>sceneManagerRef.current!.renderModeManager.authoredGeometry(mesh));
       sceneManagerRef.current?.setRigMode(mode);setRigVersion(value=>value+1);if(mode!=='inspect')handleSetSkeletonVisible(true);
     }catch(error){setRigError(error instanceof Error?error.message:String(error));}
@@ -1499,13 +1511,13 @@ export function App() {
   };
   const validateRemovalContext=()=>{
       if(healEngineRef.current?.getActiveReports().length)throw new Error('Export and reimport verified repairs before deleting a joint.');
-      const manager=sceneManagerRef.current!,root=currentAssetRootRef.current!;
+      const manager=sceneManagerRef.current!,root=assetSessionRef.current.root!;
       let presentationGeometry=false;root.traverse(node=>{if(node instanceof THREE.Mesh&&manager.renderModeManager.authoredGeometry(node)!==node.geometry)presentationGeometry=true;});
       if(presentationGeometry)throw new Error('Return to Hybrid shading before deleting a joint.');
   };
   const handleDeleteJoint=(uuid=selectedUuid,scope:RemovalScope='joint')=>{
-    setRigContext(null);const session=rigSessionRef.current,root=currentAssetRootRef.current;
-    if(!uuid||!session||!root||pendingRigRemovalRef.current||fittingBusyRef.current||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current)return;
+    setRigContext(null);const session=rigSessionRef.current,root=assetSessionRef.current.root;
+    if(!uuid||!session||!root||pendingRigRemovalRef.current||fittingBusyRef.current||rigDragging||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current)return;
     try {
       validateRemovalContext();
       if(session.mode!=='edit')throw new Error('Enter Edit Skeleton before changing joints.');
@@ -1515,7 +1527,7 @@ export function App() {
   };
   const confirmRigRemoval=()=>{
     const request=pendingRigRemovalRef.current;cancelRigRemoval();if(!request)return;
-    if(request.session!==rigSessionRef.current||request.root!==currentAssetRootRef.current||request.revision!==request.session.revision||request.session.mode!=='edit'||request.session.isGestureActive||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current){
+    if(request.session!==rigSessionRef.current||request.root!==assetSessionRef.current.root||request.revision!==request.session.revision||request.session.mode!=='edit'||request.session.isGestureActive||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current){
       setRigError(language==='ru'?'Модель изменилась. Повторно выберите удаление и проверьте предупреждение.':'The model changed. Review a new deletion warning.');return;
     }
     handleRigAction(session=>{
@@ -1531,7 +1543,7 @@ export function App() {
       if(e.defaultPrevented||e.isComposing||e.target instanceof HTMLElement&&(e.target.isContentEditable||e.target.closest('input,textarea,select')))return;
       if(e.ctrlKey&&!e.altKey&&!e.shiftKey&&(e.code==='KeyZ'||e.key.toLowerCase()==='z')) {
         e.preventDefault();
-        if(e.repeat||rigDragging||healBusyRef.current||exportBusyRef.current||repairQueueRunningRef.current||pendingAssetSwitch||isTestModalOpen||document.querySelector('[data-active-view="compare"]'))return;
+        if(e.repeat||rigDragging||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current||pendingAssetSwitch||isTestModalOpen||document.querySelector('[data-active-view="compare"]'))return;
         const session=rigSessionRef.current,heal=healEngineRef.current;
         while(undoOrderRef.current.length){
           const domain=undoOrderRef.current.at(-1)!;
@@ -1563,7 +1575,7 @@ export function App() {
     return null;
   },[selectedUuid,rigSessionRef.current,rigSessionRef.current?.revision,healReport]);
   const rigBusy=healBusy||exportBusy||fittingBusy||rigDragging||repairQueueState.status==='running'||Boolean(pendingRigRemoval);
-  const rigEditorProps={session:rigSessionRef.current,selectedUuid,settings:rigSettings,activeClipIndex,busy:rigBusy,enabled:currentExportSourceRef.current?.kind==='buffer'&&/\.glb$/i.test(fileName),error:rigError,exportResult:rigExportResult,
+  const rigEditorProps={session:rigSessionRef.current,selectedUuid,settings:rigSettings,activeClipIndex,busy:rigBusy,enabled:assetSessionRef.current.source?.kind==='buffer'&&/\.glb$/i.test(fileName),error:rigError,exportResult:rigExportResult,
     onVerifyExport:()=>void handleRigExport(false),onSaveExport:()=>void handleRigExport(true),onMode:handleRigMode,onAction:handleRigAction,onUndo:handleUndoRig,
     onAddJoint:()=>handleAddJoint(),onDeleteJoint:()=>handleDeleteJoint(),onDeleteChain:()=>handleDeleteJoint(selectedUuid,'chain'),deleteReason:jointDeleteMessage(selectedDeleteReason,language),
     onPreview:(uuid:string,quaternion:number[])=>{setRigError(null);try{sceneManagerRef.current?.previewRigRotation(uuid,quaternion);}catch(error){setRigError(error instanceof Error?error.message:String(error));}},

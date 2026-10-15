@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {noMetrics,type MetricsSink} from '../performance/MetricsSink';
 import {disposeModelResources} from '../loaders/ModelResources';
 import {ComputeWorkerClient} from '../workers/ComputeWorkerClient';
 import {packRoot,assertRootPacketBudget} from '../workers/GeometryPacket';
@@ -92,7 +93,14 @@ function repairedMeshFingerprint(root: THREE.Object3D, reports: HealOperationRep
 export class RepairedExportService {
   private readonly compute=new ComputeWorkerClient(()=>new Worker(new URL('../workers/export-compute.worker.ts',import.meta.url),{type:'module'}));
   private readonly topology=new WeakMap<THREE.Mesh,TopologyStats>();
-  constructor(private readonly resourceBaseUrl?:string,private readonly ownsImmutableInputs=false) {}
+  constructor(private readonly resourceBaseUrl?:string,private readonly ownsImmutableInputs=false,private readonly metrics:MetricsSink=noMetrics) {}
+  private observeResult(result:RepairedExportResult){
+    this.metrics.record('export',result.performance.exportMs);
+    this.metrics.record('reopenVerification',result.performance.reopenVerificationMs);
+    // Fresh/reopened geometry is disposed before returning; these are not retained bytes.
+    this.metrics.setMemory({pristineExportGeometryBytes:0,reopenedVerificationGeometryBytes:0});
+    return result;
+  }
   private topologyStats(mesh:THREE.Mesh) {
     // Only worker-owned request copies qualify. Mutable UI/legacy callers always remeasure.
     const cached=this.ownsImmutableInputs?this.topology.get(mesh):undefined;
@@ -114,7 +122,7 @@ export class RepairedExportService {
     if(session!==repairedMeshFingerprint(request.currentRoot,request.healReports) || structure!==this.nodeStructureSignature(request.currentRoot) ||
        snapshots.some(({mesh,snapshot})=>!geometryMatches(mesh.geometry,snapshot)))throw new Error('export.errors.geometryChanged');
     result.performance.totalMs=nowMs()-startedAt;
-    return result;
+    return this.observeResult(result);
   }
   public async exportAndVerify(request: RepairedExportRequest): Promise<RepairedExportResult> {
     const totalStart = nowMs();
@@ -425,7 +433,7 @@ export class RepairedExportService {
       };
 
       reopenVerificationMs = nowMs() - reopenStart;
-      return {
+      return this.observeResult({
         fileName: exportedName,
         buffer: output,
         report,
@@ -436,7 +444,7 @@ export class RepairedExportService {
           pristineGeometryBytes,
           reopenedGeometryBytes,
         },
-      };
+      });
     } finally {
       this.disposeObject(fresh.root);
       if (reopened) this.disposeObject(reopened.root);

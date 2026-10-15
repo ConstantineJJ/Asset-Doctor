@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import {noMetrics,type MetricsSink} from '../performance/MetricsSink';
+import {nowMs} from '../performance/PerformanceProfiler';
 import {binaryBytes,geometryArrays,memoryLimits} from '../performance/MemoryBudget';
 import {disposeUnownedGeometry} from '../loaders/ModelResources';
 import { documentMatrix } from '../viewer/AssetPresentation';
@@ -71,7 +73,8 @@ interface UndoHeal {
  * are left untouched.
  */
 export class SurgicalHealEngine {
-  constructor(private readonly historyLimitBytes:number=memoryLimits.history){}
+  constructor(private readonly historyLimitBytes:number=memoryLimits.history,private readonly metrics:MetricsSink=noMetrics){}
+  private verificationStart:{operationId:string;startedAt:number}|null=null;
   private pending: PendingHeal | null = null;
   private undoStack: UndoHeal[] = [];
   private lastOperation: HealOperationReport | null = null;
@@ -80,6 +83,21 @@ export class SurgicalHealEngine {
 
   /** Only the compute worker reads this plan; the UI never receives mutable plan resources. */
   public getComputedPlan() { return this.pending; }
+
+  /** Immutable accounting, with no observer access to private runtime storage. */
+  public getMemoryUsage(){
+    const retained=(entry:UndoHeal)=>[entry.appliedSnapshot,entry.restore.mutation==='index-only'?entry.restore.previousIndex.array:geometryArrays(entry.restore.previousGeometry)];
+    return {
+      repairPreviewBytes:this.pending?binaryBytes([this.pending.snapshot,this.pending.mutation==='index-only'?this.pending.replacementIndex.array:geometryArrays(this.pending.replacementGeometry)]):0,
+      undoSnapshotsBytes:binaryBytes(this.undoStack.map(retained)),
+    };
+  }
+  private publishMemory(){this.metrics.setMemory(this.getMemoryUsage());}
+  public recordPreview(durationMs:number){this.metrics.record('repairPreview',durationMs);this.publishMemory();}
+  private observeApply(result:HealApplyResult,startedAt:number){
+    if(result.success&&result.report)this.verificationStart={operationId:result.report.operationId,startedAt};
+    this.publishMemory();return result;
+  }
 
   public async previewInWorker(root:THREE.Object3D,meshUuid:string,operation:HealOperationKind,issueId:string):Promise<HealPreview> {
     this.cancelPreview();
@@ -159,6 +177,8 @@ export class SurgicalHealEngine {
     report.pipeline = pipelineComplete ? 'complete' : 'failed';
     report.status = report.targetStatus === 'REGRESSION' ? 'REGRESSION'
       : pipelineComplete ? report.targetStatus : 'PARTIAL';
+    if(this.verificationStart?.operationId===operationId){this.metrics.record('applyVerification',nowMs()-this.verificationStart.startedAt);this.verificationStart=null;}
+    this.publishMemory();
   }
 
   public validateCurrentVerifiedState(
@@ -202,12 +222,15 @@ export class SurgicalHealEngine {
     }
     this.undoStack = [];
     this.lastOperation = null;
+    this.verificationStart=null;
+    this.publishMemory();
   }
 
   public cancelPreview() {
     this.generation++;
     this.compute.dispose();
     this.disposePending();
+    this.publishMemory();
   }
 
   private disposePending() {
@@ -940,6 +963,7 @@ export class SurgicalHealEngine {
   }
 
   public applyPending(root: THREE.Object3D, assetName = ''): HealApplyResult {
+    const startedAt=nowMs();
     const steps=this.applySteps(root,assetName);
     let step=steps.next();
     while(!step.done) {
@@ -948,10 +972,11 @@ export class SurgicalHealEngine {
       try {metrics=healMetrics(analyzeMeshTopology(meshTopologyData(step.value)),step.value.geometry,step.value);}catch { /* Preserve the existing before/PARTIAL error paths. */ }
       step=steps.next(metrics);
     }
-    return step.value;
+    return this.observeApply(step.value,startedAt);
   }
 
   public async applyPendingAsync(root:THREE.Object3D,assetName:string):Promise<HealApplyResult> {
+    const startedAt=nowMs();
     const generation=this.generation,steps=this.applySteps(root,assetName);
     let step=steps.next();
     while(!step.done) {
@@ -967,7 +992,7 @@ export class SurgicalHealEngine {
       if(!geometryMatches(mesh.geometry,snapshot)) metrics=null;
       step=steps.next(metrics);
     }
-    return step.value;
+    return this.observeApply(step.value,startedAt);
   }
 
   private *applySteps(root:THREE.Object3D,assetName:string):Generator<THREE.Mesh|null,HealApplyResult,HealMetrics|null> {
@@ -1163,6 +1188,8 @@ export class SurgicalHealEngine {
     this.disposePending();
     undo.report.undoneAt = new Date().toISOString();
     this.lastOperation = undo.report;
+    this.verificationStart=null;
+    this.publishMemory();
 
     return {
       success: true,
