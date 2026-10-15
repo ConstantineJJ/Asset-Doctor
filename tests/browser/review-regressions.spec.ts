@@ -22,6 +22,8 @@ test('Review: portrait Doctor Frame and Focus contain every corner of the visibl
  });
  await test.info().attach('review-framing.json',{body:JSON.stringify(measurements),contentType:'application/json'});
  for(const [method,maximum]of Object.entries(measurements))expect(maximum,method).toBeLessThanOrEqual(1);
+ await page.evaluate(()=>{const viewer=Reflect.get(window,'reviewViewer');viewer.cameraController.frameObject(viewer.currentAssetRoot);});
+ await test.info().attach('review-frame-small.png',{body:await page.screenshot(),contentType:'image/png'});
 });
 
 test('Review: Doctor import curtain ignores internal drags and clears on cancellation',async({page})=>{
@@ -32,6 +34,7 @@ test('Review: Doctor import curtain ignores internal drags and clears on cancell
  await viewport.dispatchEvent('dragover',{dataTransfer:files});await expect(curtain).toBeVisible();
  await page.evaluate(()=>window.dispatchEvent(new Event('dragend')));await expect(curtain).toHaveCount(0);
  await viewport.dispatchEvent('dragover',{dataTransfer:files});await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(curtain).toHaveCount(0);
+ await viewport.dispatchEvent('dragover',{dataTransfer:files});await page.keyboard.press('Escape');await expect(curtain).toHaveCount(0);
 });
 
 test('Review: portrait Compare Grid and Lineup frame every model corner',async({page})=>{
