@@ -16,7 +16,11 @@ export class ComputeWorkerClient {
    let settled=false;
    const finish=(error?:Error,result?:T)=>{if(settled)return;settled=true;release();clearTimeout(timer);worker.removeEventListener('message',message);worker.removeEventListener('error',failed);worker.removeEventListener('messageerror',failed);this.cancelJob=null;
     if(error){operation.end(error.name==='AbortError'?'cancelled':'failed',{error});worker.terminate();if(this.worker===worker)this.worker=null;reject(error);}else {operation.end('completed');resolve(result!);}};
-   const message=(event:MessageEvent)=>event.data.success?finish(undefined,event.data.result):finish(new Error(event.data.error));
+   const message=(event:MessageEvent)=>{
+    const data=event.data;
+    if(!data||typeof data!=='object'||typeof data.success!=='boolean'||data.success&&!Object.hasOwn(data,'result')){finish(new Error('Compute worker returned an invalid response; operation stopped safely'));return;}
+    data.success?finish(undefined,data.result):finish(new Error(typeof data.error==='string'?data.error:'Compute worker failed; operation stopped safely'));
+   };
    const failed=(event:Event)=>{event.preventDefault();finish(new Error('Compute worker failed; operation stopped safely'));};
    const timer=setTimeout(()=>finish(new Error('Compute worker timed out; operation stopped safely')),120000);
    this.cancelJob=()=>{const error=new Error('Compute cancelled');error.name='AbortError';finish(error);};

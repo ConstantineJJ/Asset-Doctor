@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import {runBoundsTests} from '../src/viewer/BoundsTests';
+import {runRigExportGuardTests} from '../src/rig/RigExportGuardTests';
 import {runSystemLogTests} from '../src/platform/SystemLogTests';
 import {runFloorTexturePoolTests} from '../src/viewer/FloorTexturePoolTests';
 import {runShortcutTests} from '../src/platform/ShortcutTests';
@@ -35,6 +36,7 @@ import {
 async function main() {
   const results = [
     ...runBoundsTests(),
+    ...(await runRigExportGuardTests()),
     ...runDiagnosticReportTests(),
     ...runRigMemoryRegressionTests(),
     ...(await runSystemLogTests()),

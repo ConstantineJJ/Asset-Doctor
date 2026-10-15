@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { ComputeWorkerClient } from '../workers/ComputeWorkerClient';
 import { packRoot,assertRootPacketBudget } from '../workers/GeometryPacket';
 import { packClips } from '../animation/ClipPacket';
+import {equalClipData} from '../animation/ClipEdits';
 import { captureGeometry,geometryMatches } from '../heal/GeometrySnapshot';
 import type { HealOperationReport } from '../types';
 import { buildRigExportPacket } from './RigGlbPatch';
@@ -31,11 +32,10 @@ export class RigExportService {
       if(node instanceof THREE.Mesh&&!node.name.startsWith('__ascope_internal')){const geometry=geometrySource(node);geometries.push({mesh:node,geometry,snapshot:captureGeometry(geometry)});}
       if(node instanceof THREE.SkinnedMesh)binds.push({mesh:node,matrix:node.bindMatrix.toArray(),inverses:node.skeleton.boneInverses.map(matrix=>matrix.toArray())});
     });
-    const clipSignature=JSON.stringify(packClips(session.clips),(_key,value)=>ArrayBuffer.isView(value)?Array.from(value as any):value);
     const result=await this.compute.request<{buffer:ArrayBuffer;verification:RigVerification}>({patch,root,clips:packClips(authored.clips),identities:rigIdentities(session.root,session.exportNodeIndices()),resourceBaseUrl:typeof window!=='undefined'?new URL('./',window.location.href).href:undefined});
     const stillCurrent=()=>{
       if(session.isGestureActive)return false;
-      if(session.revision!==revision || geometries.some(({mesh,geometry,snapshot})=>geometrySource(mesh)!==geometry||!geometryMatches(geometry,snapshot)) || binds.some(({mesh,matrix,inverses})=>JSON.stringify([mesh.bindMatrix.toArray(),mesh.skeleton.boneInverses.map(matrix=>matrix.toArray())])!==JSON.stringify([matrix,inverses])) || JSON.stringify(packClips(session.clips),(_key,value)=>ArrayBuffer.isView(value)?Array.from(value as any):value)!==clipSignature)return false;
+      if(session.revision!==revision || geometries.some(({mesh,geometry,snapshot})=>geometrySource(mesh)!==geometry||!geometryMatches(geometry,snapshot)) || binds.some(({mesh,matrix,inverses})=>JSON.stringify([mesh.bindMatrix.toArray(),mesh.skeleton.boneInverses.map(matrix=>matrix.toArray())])!==JSON.stringify([matrix,inverses])) || !equalClipData(session.clips,authored.clips))return false;
       if(session.mode==='edit')for(const [uuid,rest] of authored.nodes) {
           const node=session.root.getObjectByProperty('uuid',uuid);
           if(!node || JSON.stringify([node.position.toArray(),node.quaternion.toArray(),node.scale.toArray()])!==JSON.stringify([rest.position,rest.quaternion,rest.scale]))return false;

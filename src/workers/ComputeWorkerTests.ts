@@ -5,9 +5,19 @@ import {SurgicalHealEngine} from '../heal/SurgicalHealEngine';
 import {healMetrics} from '../heal/HealVerification';
 import {analyzeMeshTopology} from '../analysis/TopologyAnalyzer';
 import {meshTopologyData} from '../analysis/MeshTopologyData';
+import {ComputeWorkerClient} from './ComputeWorkerClient';
+import {ByteBudget} from '../performance/MemoryBudget';
 
 export async function runComputeWorkerTests() {
  const results:{name:string;passed:boolean;actual?:unknown;expected?:unknown}[]=[];
+ for(const data of [null,{}, {success:'yes'}, {success:true}]){
+  let callback:((event:MessageEvent)=>void)|undefined,terminated=false;
+  const budget=new ByteBudget(100),client=new ComputeWorkerClient(()=>({addEventListener:(name:string,listener:any)=>{if(name==='message')callback=listener;},removeEventListener:()=>{},terminate:()=>{terminated=true;},postMessage:()=>{}} as unknown as Worker),budget);
+  const outcome=client.request({bytes:new Uint8Array(4)}).then(()=>null,error=>error as Error);let threw=false;
+  try{callback!({data} as MessageEvent);}catch{threw=true;}
+  client.dispose();const error=await outcome;
+  results.push({name:`Review invalid worker envelope ${JSON.stringify(data)} fails immediately and releases its reservation`,passed:!threw&&!!error&&error.name!=='AbortError'&&terminated&&budget.used===0,actual:{threw,error:error?.message,bytes:budget.used},expected:'No event exception; explicit worker failure; zero reserved bytes'});
+ }
  const geometry=new THREE.BufferGeometry(),buffer=new THREE.InterleavedBuffer(new Float32Array([0,0,0,0,0,1,0,0,1,0,0,1,0,0,1]),5);
  geometry.setAttribute('position',new THREE.InterleavedBufferAttribute(buffer,3,0));geometry.setAttribute('uv',new THREE.InterleavedBufferAttribute(buffer,2,3));geometry.setIndex([0,1,2,0,0,0]);
  geometry.morphAttributes.position=[new THREE.Float32BufferAttribute([0,0,1,1,0,1,0,1,1],3)];geometry.morphTargetsRelative=true;
