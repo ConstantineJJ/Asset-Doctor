@@ -20,22 +20,43 @@ export async function confirmRepairQueue(message: string): Promise<boolean> {
 }
 
 /** The dialog grants scope for selected paths; no whole-disk capability is needed. */
-export async function pickModelFiles(multiple = false): Promise<File[]> {
-  const [{ open }, { readFile }] = await Promise.all([
-    import('@tauri-apps/plugin-dialog'),
-    import('@tauri-apps/plugin-fs'),
-  ]);
+async function pickModelPaths(multiple:boolean):Promise<string[]> {
+  const {open}=await import('@tauri-apps/plugin-dialog');
   const selected = await open({
     multiple,
     directory: false,
     filters: [{ name: '3D models', extensions: ['glb', 'gltf'] }],
   });
-  const paths = selected === null ? [] : Array.isArray(selected) ? selected : [selected];
+  return selected === null ? [] : Array.isArray(selected) ? selected : [selected];
+}
+
+async function readModelFile(path:string):Promise<File>{
+  const {readFile}=await import('@tauri-apps/plugin-fs');
+  const bytes=await readFile(path);
+  const name=path.split(/[\\/]/).pop() || 'model.glb';
+  return new File([bytes],name,{type:/\.glb$/i.test(name)?'model/gltf-binary':'model/gltf+json'});
+}
+
+/** Apply the live Compare capacity before reading bytes, with only one File in flight. */
+export async function visitPickedModelFiles(capacity:()=>number,visit:(file:File)=>Promise<void>):Promise<{skipped:number}> {
+  const free=()=>Math.max(0,Math.floor(capacity()));
+  if(free()===0)return {skipped:0};
+  const paths=(await pickModelPaths(true)).filter(path=>/\.(glb|gltf)$/i.test(path));
+  const admitted=paths.slice(0,free());
+  let consumed=0;
+  for(const path of admitted){
+    if(free()===0)break;
+    await visit(await readModelFile(path));
+    consumed++;
+  }
+  return {skipped:paths.length-consumed};
+}
+
+export async function pickModelFiles(multiple = false): Promise<File[]> {
+  const paths=await pickModelPaths(multiple);
   const files: File[] = [];
   for (const path of paths) {
-    const bytes = await readFile(path);
-    const name = path.split(/[\\/]/).pop() || 'model.glb';
-    files.push(new File([bytes], name, { type: name.endsWith('.glb') ? 'model/gltf-binary' : 'model/gltf+json' }));
+    files.push(await readModelFile(path));
   }
   return files;
 }

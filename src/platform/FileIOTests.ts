@@ -1,5 +1,5 @@
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
-import { confirmRepairQueue, pickModelFiles, saveBinaryFile, requestDesktopClose, protectDesktopClose } from './FileIO';
+import { confirmRepairQueue, pickModelFiles, saveBinaryFile, requestDesktopClose, protectDesktopClose, visitPickedModelFiles } from './FileIO';
 
 export async function runFileIOTests() {
   const results: { name: string; passed: boolean; actual?: unknown; expected?: unknown }[] = [];
@@ -116,6 +116,30 @@ export async function runFileIOTests() {
     });
     const files = await pickModelFiles(true);
     results.push({ name: 'Native model picker preserves Unicode basenames and bytes', passed: files.length === 2 && files[0].name === 'кошка.glb' && files[1].name === 'robot.gltf' && String(new Uint8Array(await files[0].arrayBuffer())) === '7,8,9' });
+
+    const reads:string[]=[],visited:string[]=[];
+    let slots=2,releaseVisit!:(()=>void),opened=0;
+    const visitBarrier=new Promise<void>(resolve=>{releaseVisit=resolve;});
+    mockIPC((command,args)=>{
+      if(command==='plugin:dialog|open'){opened++;return ['C:/A.glb','C:/B.glb','C:/C.glb'];}
+      if(command==='plugin:fs|read_file'){reads.push((args as {path:string}).path);return new Uint8Array([1,2]).buffer;}
+      throw new Error('Unexpected import command: '+command);
+    });
+    const visiting=visitPickedModelFiles(()=>slots,async file=>{visited.push(file.name);if(visited.length===1)await visitBarrier;slots--;});
+    for(let i=0;i<20&&!visited.length;i++)await new Promise(resolve=>setImmediate(resolve));
+    results.push({name:'F07 native picker waits for one imported file before reading the next',passed:reads.length===1&&visited.length===1});
+    releaseVisit();const admission=await visiting;
+    results.push({name:'F07 excess Compare paths are rejected before native readFile',passed:reads.join(',')==='C:/A.glb,C:/B.glb'&&visited.join(',')==='A.glb,B.glb'&&admission.skipped===1});
+    const beforeFull=opened;await visitPickedModelFiles(()=>0,async()=>{throw new Error('Full Compare must not import');});
+    results.push({name:'F07 full Compare does not even open a native dialog',passed:opened===beforeFull&&reads.length===2});
+    slots=1;reads.length=0;
+    mockIPC((command)=>{if(command==='plugin:dialog|open'){slots=0;return ['C:/A.glb'];}if(command==='plugin:fs|read_file')reads.push('unexpected');});
+    await visitPickedModelFiles(()=>slots,async()=>{throw new Error('Stale capacity');});
+    results.push({name:'F07 capacity is checked again after the asynchronous native dialog',passed:reads.length===0});
+    slots=2;reads.length=0;
+    mockIPC(command=>{if(command==='plugin:dialog|open')return ['C:/A.glb','C:/B.glb'];if(command==='plugin:fs|read_file'){reads.push('read');return new Uint8Array([1]).buffer;}});
+    let visitError='';try{await visitPickedModelFiles(()=>slots,async()=>{throw new Error('import cancelled');});}catch(cause){visitError=String(cause);}
+    results.push({name:'F07 failed or cancelled consumer stops further native reads',passed:reads.length===1&&visitError.includes('import cancelled')});
 
     mockIPC(() => null);
     results.push({ name: 'Native open cancellation returns no model', passed: (await pickModelFiles()).length === 0 });

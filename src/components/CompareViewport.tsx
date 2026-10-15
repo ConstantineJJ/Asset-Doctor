@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { GLBLoaderService } from '../loaders/GLBLoaderService';
 import { disposeModelResources } from '../loaders/ModelResources';
-import { isDesktop, pickModelFiles } from '../platform/FileIO';
+import { isDesktop, visitPickedModelFiles } from '../platform/FileIO';
 import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
 import { analyzeTextures } from '../analysis/TextureAnalyzer';
 import { CompareSceneManager } from '../viewer/CompareSceneManager';
@@ -76,6 +76,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   const pickingFilesRef = useRef(false);
 
   const [assets, setAssets] = useState<CompareAssetRecord[]>([]);
+  const assetsRef=useRef(assets);assetsRef.current=assets;
   const [viewMode, setViewMode] = useState<CompareViewMode>('grid');
   const [scaleMode, setScaleMode] = useState<CompareScaleMode>('real');
   const [lightingPreset, setLightingPreset] = useState<LightingPreset>('neutral-studio');
@@ -322,7 +323,14 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
     if (pickingFilesRef.current || addingFilesRef.current) return;
     pickingFilesRef.current = true;
     try {
-      await addFiles(await pickModelFiles(true));
+      const loader=loaderRef.current;
+      const capacity=()=>loaderRef.current===loader?Math.max(0,8-assetsRef.current.length):0;
+      const result=await visitPickedModelFiles(capacity,async file=>{
+        await addFiles([file]);
+        // Publish the newly occupied slot before considering the next native path.
+        await new Promise<void>(resolve=>setTimeout(resolve,0));
+      });
+      if(result.skipped)setLoadError(`Пропущено файлов: ${result.skipped}. В Compare доступно не более 8 мест.`);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -380,7 +388,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   };
 
   const handleFiles = (fileList: FileList | null) => {
-    if (!fileList) return;
+    if (!fileList||pickingFilesRef.current) return;
     void addFiles(Array.from(fileList));
   };
 
@@ -681,7 +689,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
                 setActiveAssetId(asset.id);
                 managerRef.current?.setActiveAssetId(asset.id);
               }}
-              className={`group flex min-w-0 max-w-72 items-center gap-1.5 rounded border px-2 py-1 text-left text-[10px] shadow cursor-pointer transition select-none ${
+              className={`group flex min-w-48 max-w-72 shrink-0 items-center gap-1.5 rounded border px-2 py-1 text-left text-[10px] shadow cursor-pointer transition select-none ${
                 activeAsset?.id === asset.id
                   ? 'border-cyan-600 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-700/40'
                   : 'border-[#343946] bg-[#181b21]/90 text-gray-300 hover:bg-[#20242c]'
