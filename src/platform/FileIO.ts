@@ -2,6 +2,13 @@ import { isTauri } from '@tauri-apps/api/core';
 
 export { isTauri as isDesktop };
 
+/** Request normal window close so the existing unsaved-change guard can veto exit. */
+export async function requestDesktopClose():Promise<void>{
+  if(!isTauri())throw new Error('Desktop exit is unavailable in the browser');
+  const {getCurrentWindow}=await import('@tauri-apps/api/window');
+  await getCurrentWindow().close();
+}
+
 /** Only an affirmative answer authorizes repair; dialog errors reject to the caller. */
 export async function confirmRepairQueue(message: string): Promise<boolean> {
   if (isTauri()) {

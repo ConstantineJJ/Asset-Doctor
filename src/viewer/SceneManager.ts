@@ -1,3 +1,4 @@
+import {markStartup} from '../platform/StartupTrace';
 import * as THREE from 'three';
 import {retainModelResources,disposeModelResources} from '../loaders/ModelResources';
 import { CameraController } from './CameraController';
@@ -1861,6 +1862,7 @@ export class SceneManager {
       this.rigGizmo.update();
 
       this.renderer.render(this.scene, this.camera);
+      markStartup('doctor_frame');
 
       // FPS tracking
       this.frameCount++;

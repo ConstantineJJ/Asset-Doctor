@@ -1,3 +1,4 @@
+import {markStartup} from './platform/StartupTrace';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { TopToolbar } from './components/TopToolbar';
@@ -74,6 +75,7 @@ type PendingAssetSwitch =
   | { kind: 'sample'; sampleId: string };
 
 export function App() {
+  useEffect(()=>{markStartup('react_ready');},[]);
   const { t, language } = useI18n();
   // Scene & Service instances
   const sceneManagerRef = useRef<SceneManager | null>(null);
@@ -594,6 +596,7 @@ export function App() {
   const handleCanvasMount = useCallback(
     (container: HTMLElement) => {
       if (!sceneManagerRef.current) {
+        markStartup('doctor_create');
         const mgr = new SceneManager(container, {
           onRigChanged:publishRigChange,
           onRigError:setRigError,
@@ -617,6 +620,7 @@ export function App() {
           },
         }, doctorActiveRef.current);
         sceneManagerRef.current = mgr;
+        markStartup('doctor_ready');
         loaderServiceRef.current?.configureRenderer(mgr.renderer);
 
         // FPS polling
@@ -1625,6 +1629,7 @@ export function App() {
           isLoading={isLoading}
           fileName={fileName}
           renderMode={renderMode}
+          skeletonVisible={toggles.skeleton}
           triangleCount={summary?.triangleCount || 0}
           modelHeight={summary?.boundingBox.size[1] || 0}
           surface={surface}

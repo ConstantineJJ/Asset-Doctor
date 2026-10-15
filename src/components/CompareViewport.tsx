@@ -1,3 +1,4 @@
+import {markStartup} from '../platform/StartupTrace';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
@@ -40,6 +41,7 @@ interface CompareViewportProps {
   onClose: () => void;
   onOpenInDoctor: (asset: CompareAssetRecord) => void;
   renderMode: RenderMode;
+  skeletonVisible?:boolean;
   surface?: SurfaceType;
   onSetSurface?: (surface: SurfaceType) => void;
   isTreeCollapsed?: boolean;
@@ -60,6 +62,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   onClose,
   onOpenInDoctor,
   renderMode,
+  skeletonVisible=false,
   surface = 'grid',
   onSetSurface,
   isTreeCollapsed: propIsTreeCollapsed,
@@ -150,6 +153,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
     loaderRef.current = new GLBLoaderService();
     if (!hostRef.current) return;
 
+    markStartup('compare_create');
     const manager = new CompareSceneManager(hostRef.current, {
       onActiveAssetChange: (assetId) => setActiveAssetId(assetId || null),
       onSoloRequest: setSoloAssetId,
@@ -162,8 +166,10 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       },
     });
     managerRef.current = manager;
+    markStartup('compare_ready');
     loaderRef.current.configureRenderer(manager.renderer);
     manager.setActive(open);
+    manager.setSkeletonVisible(skeletonVisible);
     manager.setRenderMode(renderMode);
     manager.setLightingPreset(lightingPreset);
     manager.setSurface(currentSurface);
@@ -178,6 +184,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
   }, []);
 
   useEffect(() => { managerRef.current?.setActive(open); }, [open]);
+  useEffect(()=>{managerRef.current?.setSkeletonVisible(skeletonVisible);},[skeletonVisible]);
 
   useEffect(() => {
     managerRef.current?.setAssets(assets);
@@ -227,9 +234,13 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
     const preventDrag = (e: DragEvent) => {
       e.preventDefault();
     };
+    const clearDrag=()=>setDragOver(false);
+    window.addEventListener('dragend',clearDrag);window.addEventListener('drop',clearDrag);window.addEventListener('blur',clearDrag);
     window.addEventListener('dragover', preventDrag);
     window.addEventListener('drop', preventDrag);
     return () => {
+      setDragOver(false);
+      window.removeEventListener('dragend',clearDrag);window.removeEventListener('drop',clearDrag);window.removeEventListener('blur',clearDrag);
       window.removeEventListener('dragover', preventDrag);
       window.removeEventListener('drop', preventDrag);
     };
@@ -391,9 +402,10 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
       onDragOver={(event) => {
         if (!open) return;
         event.preventDefault();
-        setDragOver(true);
+        setDragOver(Array.from(event.dataTransfer.types).includes('Files'));
       }}
-      onDragLeave={() => setDragOver(false)}
+      onDragLeave={event=>{if(!(event.relatedTarget instanceof Node)||!event.currentTarget.contains(event.relatedTarget))setDragOver(false);}}
+      onDragEnd={()=>setDragOver(false)}
       onDrop={handleDrop}
     >
       <input
@@ -644,6 +656,8 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
               key={asset.id}
               draggable
               onDragStart={(e) => {
+                setDragOver(false);e.dataTransfer.effectAllowed='move';
+                e.dataTransfer.setData('application/x-asset-doctor-compare',String(index));
                 e.dataTransfer.setData('text/plain', String(index));
               }}
               onDragOver={(e) => {
@@ -652,14 +666,15 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
               onDrop={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                setDragOver(false);
                 if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                   handleFiles(e.dataTransfer.files);
                   return;
                 }
-                const text = e.dataTransfer.getData('text/plain');
+                const text = e.dataTransfer.getData('application/x-asset-doctor-compare');
                 if (text !== '') {
                   const from = Number(text);
-                  if (!isNaN(from)) reorderAssets(from, index);
+                  if (Number.isInteger(from)) reorderAssets(from, index);
                 }
               }}
               onClick={() => {

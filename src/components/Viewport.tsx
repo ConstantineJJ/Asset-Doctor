@@ -24,6 +24,7 @@ interface ViewportProps {
   isLoading: boolean;
   fileName?: string;
   renderMode: RenderMode;
+  skeletonVisible?:boolean;
   triangleCount: number;
   modelHeight: number;
   surface?: SurfaceType;
@@ -46,6 +47,7 @@ export const Viewport: React.FC<ViewportProps> = ({
   isLoading,
   fileName,
   renderMode,
+  skeletonVisible=false,
   triangleCount,
   modelHeight,
   surface = 'grid',
@@ -388,6 +390,7 @@ export const Viewport: React.FC<ViewportProps> = ({
         onClose={() => setCompareOpen(false)}
         onOpenInDoctor={openCompareAssetInDoctor}
         renderMode={renderMode}
+        skeletonVisible={skeletonVisible}
         surface={surface}
         onSetSurface={onSetSurface}
       />

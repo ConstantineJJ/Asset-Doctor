@@ -21,6 +21,7 @@ import {
 import type { LightingPreset, RenderMode } from '../types';
 import { useI18n } from '../i18n';
 import {version as appVersion} from '../../package.json';
+import {ApplicationMenu} from './ApplicationMenu';
 
 interface TopToolbarProps {
   onPickFile?: () => void;
@@ -132,6 +133,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
       />
 
       <div className="flex items-center gap-1.5 shrink-0">
+        <ApplicationMenu toggles={toggles} onToggleHelper={onToggleHelper}/>
         <button
           onClick={onToggleTreeCollapse}
           className={`p-1.5 rounded border transition cursor-pointer ${

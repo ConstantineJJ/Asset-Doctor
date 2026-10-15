@@ -7,6 +7,7 @@ import { RenderModeManager } from './RenderModeManager';
 import { SurfaceManager } from './SurfaceManager';
 import {SceneRenderResources} from './SceneRenderResources';
 import { computeCompareLayout } from '../compare/CompareLayout';
+import {CompareRigOverlay} from '../compare/CompareRigOverlay';
 import { cloneForCompare, disposeCompareClone } from '../compare/CompareClone';
 import { createPresentationWrapper, documentBounds } from './AssetPresentation';
 import type { LightingPreset, RenderMode, SurfaceType } from '../types';
@@ -28,6 +29,7 @@ interface CompareSceneManagerCallbacks {
 interface SlotRuntime {
   asset: CompareAssetRecord;
   presentation: THREE.Group;
+  rigOverlay:CompareRigOverlay;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
@@ -45,6 +47,7 @@ interface LineupRootRuntime {
   asset: CompareAssetRecord;
   root: THREE.Group;
   presentation: THREE.Group;
+  rigOverlay:CompareRigOverlay;
   animations: THREE.AnimationClip[];
   mixer: THREE.AnimationMixer | null;
   action: THREE.AnimationAction | null;
@@ -239,6 +242,13 @@ export class CompareSceneManager {
 
   public getAutoRotate(): boolean {
     return this.isAutoRotating;
+  }
+
+  private skeletonVisible=false;
+  public setSkeletonVisible(visible:boolean){
+    this.skeletonVisible=visible;
+    for(const slot of this.slots)slot.rigOverlay.setVisible(visible);
+    for(const entry of this.lineup?.roots??[])entry.rigOverlay.setVisible(visible);
   }
 
   public setLightBulbVisible(visible: boolean) {
@@ -564,6 +574,7 @@ export class CompareSceneManager {
     const runtime: SlotRuntime = {
       asset,
       presentation,
+      rigOverlay:new CompareRigOverlay(asset.root,scene,this.skeletonVisible),
       scene,
       camera,
       controls,
@@ -670,6 +681,7 @@ export class CompareSceneManager {
         asset,
         root,
         presentation,
+        rigOverlay:new CompareRigOverlay(root,scene,this.skeletonVisible),
         animations,
         mixer,
         action,
@@ -1077,7 +1089,8 @@ export class CompareSceneManager {
         this.callbacks.onModelRotationChange?.(Math.round(this.modelRotationY));
       }
 
-      for (const slot of this.slots) slot.controls.update();
+      for (const slot of this.slots){slot.rigOverlay.update();slot.controls.update();}
+      for(const entry of this.lineup?.roots??[])entry.rigOverlay.update();
       this.lineup?.controls.update();
 
       this.renderer.setScissorTest(true);
@@ -1115,6 +1128,7 @@ export class CompareSceneManager {
   private clearSlotRuntimes() {
     for (const slot of this.slots) {
       slot.controls.dispose();
+      slot.rigOverlay.dispose();
       slot.mixer?.stopAllAction();
       if (slot.mixer) slot.mixer.uncacheRoot(slot.asset.root);
       slot.renderModeManager.resetAll(slot.asset.root);
@@ -1134,6 +1148,7 @@ export class CompareSceneManager {
     const lineup = this.lineup;
     lineup.controls.dispose();
     for (const entry of lineup.roots) {
+      entry.rigOverlay.dispose();
       entry.mixer?.stopAllAction();
       if (entry.mixer) entry.mixer.uncacheRoot(entry.root);
       lineup.renderModeManager.resetAll(entry.root);

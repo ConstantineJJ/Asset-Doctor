@@ -1,5 +1,5 @@
-import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { confirmRepairQueue, pickModelFiles, saveBinaryFile } from './FileIO';
+import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
+import { confirmRepairQueue, pickModelFiles, saveBinaryFile, requestDesktopClose, protectDesktopClose } from './FileIO';
 
 export async function runFileIOTests() {
   const results: { name: string; passed: boolean; actual?: unknown; expected?: unknown }[] = [];
@@ -8,6 +8,34 @@ export async function runFileIOTests() {
   Object.defineProperty(globalThis, 'window', { value: { crypto }, configurable: true });
   Object.defineProperty(globalThis, 'isTauri', { value: true, configurable: true });
   try {
+    mockWindows('main');
+    let closeCalls=0,destroyCalls=0,dialogAnswer='Cancel',blockClose=true;
+    let closeHandler:((event:unknown)=>Promise<void>)|undefined;
+    const closeCommands:string[]=[];
+    mockIPC(async(command,args)=>{
+      closeCommands.push(command);
+      if(command==='plugin:event|listen'){
+        const callbackId=(args as {handler:number}).handler;
+        const callbacks=(window as unknown as {__TAURI_INTERNALS__:{callbacks:Map<number,(event:unknown)=>Promise<void>>}}).__TAURI_INTERNALS__.callbacks;
+        closeHandler=callbacks.get(callbackId);return callbackId;
+      }
+      if(command==='plugin:window|close'){closeCalls++;await closeHandler?.({event:'tauri://close-requested',id:1,payload:null});}
+      else if(command==='plugin:window|destroy')destroyCalls++;
+      else if(command==='plugin:dialog|message')return dialogAnswer;
+      else if(command!=='plugin:event|unlisten')throw new Error('Unexpected exit command: '+command);
+    });
+    const unprotect=await protectDesktopClose(()=>blockClose,'Unsaved rig');
+    await requestDesktopClose();
+    results.push({name:'Menu exit requests normal close and preserves unsaved edits on Cancel',passed:closeCalls===1&&destroyCalls===0&&closeCommands.includes('plugin:dialog|message')});
+    dialogAnswer='Ok';await requestDesktopClose();
+    results.push({name:'Menu exit destroys only after unsaved edits are explicitly confirmed',passed:closeCalls===2&&destroyCalls===1});
+    blockClose=false;closeCommands.length=0;await requestDesktopClose();
+    results.push({name:'Saved menu exit follows normal close without a discard prompt',passed:closeCalls===3&&destroyCalls===2&&!closeCommands.includes('plugin:dialog|message')});
+    await unprotect();
+    mockIPC(()=>{throw new Error('close ACL denied');});
+    let exitError='';try{await requestDesktopClose();}catch(cause){exitError=String(cause);}
+    results.push({name:'Native exit reports close failure',passed:exitError.includes('close ACL denied')});
+
     let messageCalls = 0;
     let releaseConfirm!: (result: string) => void;
     const confirmationBarrier = new Promise<string>(resolve => { releaseConfirm = resolve; });
