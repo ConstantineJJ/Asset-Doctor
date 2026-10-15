@@ -34,4 +34,4 @@
 - Нижняя полоса остаётся доступна вместе с timeline, содержит текущую модель, статус записи, partial scan и общую команду отчёта. Верхний значок журнала остаётся справа вне горизонтально прокручиваемых остальных controls.
 - Focused browser **6/6 PASS**; TypeScript PASS; unit/integration **362/362 PASS**. В промежуточном тесте первая карточка оказалась OK и закономерно отсутствовала в bulk; тест исправлен на реальную Warning карточку, затем намеренно включает фильтр Passed перед bulk. Контракты не ослаблены. Native rotation/invalid input/canonical JSON и startup trace проверяются отдельно без запуска окна.
 
-Полная production проверка и Windows поставка ещё в работе. F09 не включён. Native EXE/installer автоматически не запускаются.
+Финальная проверка: TypeScript, **363/363** unit/integration, **99/99** fresh production Edge и **2/2** на частном Compare corpus владельца PASS. Native Rust **4/4 PASS**, Windows EXE/NSIS build PASS. Подробности и границы — [QA 2.0.11](QA_F08_2_0_11.md). F09 не включён. Native EXE/installer автоматически не запускаются; F08 ожидает приёмки владельца.
