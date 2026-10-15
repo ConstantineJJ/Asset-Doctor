@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { HealthIssue } from '../types';
 import { analyzeAnimations } from './AnimationAnalyzer';
 import { documentBounds } from '../viewer/AssetPresentation';
+import {isGltfCubic} from '../animation/ClipEdits';
 
 function getRootBoneNames(root: THREE.Object3D): string[] {
   const names: string[] = [];
@@ -37,16 +38,23 @@ function targetExists(root: THREE.Object3D, trackName: string): boolean {
 
 function isStaticTrack(track: THREE.KeyframeTrack): boolean {
   if (track.times.length < 2) return true;
-  const valueSize = track.getValueSize();
+  const stride=track.getValueSize(),cubic=isGltfCubic(track),valueSize=cubic?stride/3:stride;
   if (!Number.isFinite(valueSize) || valueSize <= 0 || !Number.isInteger(valueSize)) return false;
   if (track.values.length < valueSize * 2) return true;
 
   for (let keyIndex = 1; keyIndex < track.times.length; keyIndex++) {
     for (let component = 0; component < valueSize; component++) {
-      const baseline = track.values[component];
-      const current = track.values[keyIndex * valueSize + component];
+      const baseline = track.values[(cubic?valueSize:0)+component];
+      const current = track.values[keyIndex * stride + (cubic?valueSize:0) + component];
       if (!Number.isFinite(baseline) || !Number.isFinite(current)) return false;
       if (Math.abs(current - baseline) > 1e-7) return false;
+      // Hermite curves can move between equal keys. Only interval tangents
+      // participate: the first incoming and final outgoing tangent are unused.
+      if(cubic){
+        const outgoing=track.values[(keyIndex-1)*stride+2*valueSize+component],incoming=track.values[keyIndex*stride+component];
+        const interval=track.times[keyIndex]-track.times[keyIndex-1];
+        if(!Number.isFinite(interval)||interval<=0||!Number.isFinite(outgoing)||!Number.isFinite(incoming)||Math.abs(outgoing*interval)>1e-7||Math.abs(incoming*interval)>1e-7)return false;
+      }
     }
   }
   return true;
@@ -148,9 +156,10 @@ export function analyzeAnimationDiagnostics(
       }
 
       if (!malformed && track.name.endsWith('.position') && valueSize >= 3 && times.length >= 2) {
+        const valueOffset=isGltfCubic(track)?valueSize/3:0;
         for (let keyIndex = 1; keyIndex < times.length; keyIndex++) {
-          const prevOffset = (keyIndex - 1) * valueSize;
-          const nextOffset = keyIndex * valueSize;
+          const prevOffset = (keyIndex - 1) * valueSize + valueOffset;
+          const nextOffset = keyIndex * valueSize + valueOffset;
           const dx = values[nextOffset] - values[prevOffset];
           const dy = values[nextOffset + 1] - values[prevOffset + 1];
           const dz = values[nextOffset + 2] - values[prevOffset + 2];

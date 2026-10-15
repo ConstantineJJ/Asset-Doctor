@@ -10,6 +10,24 @@ export function runDiagnosticCoverageTests(): DiagnosticCoreTestResult[] {
   const results: DiagnosticCoreTestResult[] = [];
 
   {
+    const root=new THREE.Group();root.name='Root';
+    const cubic=(values:number[])=>{const track=new THREE.VectorKeyframeTrack('Root.position',[0,1],values);const factory=()=>{throw new Error('Diagnostic inspection must not evaluate animation');};(factory as any).isInterpolantFactoryMethodGLTFCubicSpline=true;(track as any).createInterpolant=factory;return track;};
+    const moving=new THREE.AnimationClip('Cubic travel',1,[cubic([100,0,0,0,0,0,100,0,0,100,0,0,20,0,0,100,0,0])]);
+    const motion=measureRootMotion(moving,['Root']),issues=analyzeAnimationDiagnostics([moving],root);
+    results.push({name:'Review cubic root displacement reads values, not tangents',description:'Cubic key blocks contain in tangent, value, out tangent; actual authored translation is 20.',expected:'20 units and one position jump',actual:JSON.stringify({motion,jump:issues.find(i=>i.id==='animation-extreme-position-jumps')}),passed:motion.translation===20&&motion.detected&&issues.some(i=>i.id==='animation-extreme-position-jumps'&&i.count===1)});
+    const curved=new THREE.AnimationClip('Cubic curve',1,[cubic([1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0])]);
+    results.push({name:'Review cubic equal keys with active tangents are not static',description:'Equal key values with nonzero Hermite tangents move between keys.',expected:'No static channel finding',actual:JSON.stringify(analyzeAnimationDiagnostics([curved],root).map(i=>i.id)),passed:!analyzeAnimationDiagnostics([curved],root).some(i=>i.id==='animation-static-channels')});
+    const still=new THREE.AnimationClip('Cubic still',1,[cubic([100,0,0,5,0,0,0,0,0,0,0,0,5,0,0,-200,0,0])]);
+    results.push({name:'Review cubic unused endpoint tangents do not imply movement',description:'First incoming and last outgoing tangents are unused by the evaluated interval.',expected:'One static channel finding',actual:JSON.stringify(analyzeAnimationDiagnostics([still],root).map(i=>i.id)),passed:analyzeAnimationDiagnostics([still],root).some(i=>i.id==='animation-static-channels'&&i.count===1)});
+    const slow=curved.clone();slow.name='Slow curve';slow.duration=1000;slow.tracks[0].times[1]=1000;for(let i=0;i<slow.tracks[0].values.length;i++)slow.tracks[0].values[i]*=1e-8;
+    results.push({name:'Review cubic static threshold accounts for interval duration',description:'Small derivatives can produce measurable movement over long intervals.',expected:'No static channel finding',actual:JSON.stringify(analyzeAnimationDiagnostics([slow],root).map(i=>i.id)),passed:!analyzeAnimationDiagnostics([slow],root).some(i=>i.id==='animation-static-channels')});
+    const rotation=new THREE.QuaternionKeyframeTrack('Root.quaternion',[0,1],[0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,Math.SQRT1_2,0,Math.SQRT1_2,0,0,0,0]);
+    (rotation as any).createInterpolant=(moving.tracks[0] as any).createInterpolant;
+    const rotationMotion=measureRootMotion(new THREE.AnimationClip('Cubic turn',1,[rotation]),['Root']);
+    results.push({name:'Review cubic root rotation reads key quaternions',description:'Zero tangent quaternions must not be measured as authored orientations.',expected:'90 degrees',actual:String(rotationMotion.rotation),passed:Math.abs(rotationMotion.rotation-90)<.01});
+  }
+
+  {
     const root = new THREE.Group();
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute(

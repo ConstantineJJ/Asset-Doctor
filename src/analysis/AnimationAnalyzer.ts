@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { AnimationClipInfo } from '../types';
+import {isGltfCubic} from '../animation/ClipEdits';
 
 export interface RootMotionMeasurement {
   detected: boolean;
@@ -32,15 +33,16 @@ export function measureRootMotion(
     const isPositionTrack = track.name.endsWith('.position');
     const isRotationTrack = track.name.endsWith('.quaternion');
     if (!isRootCandidate(track.name, rootBoneNames)) continue;
+    const cubic=isGltfCubic(track),stride=track.getValueSize(),first=cubic?stride/3:0,last=(track.times.length-1)*stride+first;
 
-    if (isPositionTrack && track.values.length >= 6) {
+    if (isPositionTrack && track.times.length>0 && stride===(cubic?9:3) && track.values.length>=last+3) {
       const values = track.values;
-      const startX = values[0];
-      const startY = values[1];
-      const startZ = values[2];
-      const endX = values[values.length - 3];
-      const endY = values[values.length - 2];
-      const endZ = values[values.length - 1];
+      const startX = values[first];
+      const startY = values[first+1];
+      const startZ = values[first+2];
+      const endX = values[last];
+      const endY = values[last+1];
+      const endZ = values[last+2];
 
       if (![startX, startY, startZ, endX, endY, endZ].every(Number.isFinite)) continue;
 
@@ -56,14 +58,14 @@ export function measureRootMotion(
       }
     }
 
-    if (isRotationTrack && track.values.length >= 8) {
+    if (isRotationTrack && track.times.length>0 && stride===(cubic?12:4) && track.values.length>=last+4) {
       const values = track.values;
-      const qStart = new THREE.Quaternion(values[0], values[1], values[2], values[3]);
+      const qStart = new THREE.Quaternion(values[first], values[first+1], values[first+2], values[first+3]);
       const qEnd = new THREE.Quaternion(
-        values[values.length - 4],
-        values[values.length - 3],
-        values[values.length - 2],
-        values[values.length - 1]
+        values[last],
+        values[last+1],
+        values[last+2],
+        values[last+3]
       );
 
       if (
