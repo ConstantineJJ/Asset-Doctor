@@ -69,6 +69,14 @@ export const Viewport: React.FC<ViewportProps> = ({
   const [showSurfaceMenu, setShowSurfaceMenu] = useState(false);
   const { language } = useI18n();
 
+  useEffect(()=>{
+    const clear=()=>setIsDragOver(false);
+    const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')clear();};
+    window.addEventListener('dragend',clear);window.addEventListener('drop',clear);window.addEventListener('blur',clear);window.addEventListener('keydown',escape);
+    return()=>{window.removeEventListener('dragend',clear);window.removeEventListener('drop',clear);window.removeEventListener('blur',clear);window.removeEventListener('keydown',escape);};
+  },[]);
+  useEffect(()=>{setIsDragOver(false);},[compareOpen]);
+
   useLayoutEffect(() => {
     onDoctorActiveChange(!compareOpen);
     return () => onDoctorActiveChange(false);
@@ -92,13 +100,13 @@ export const Viewport: React.FC<ViewportProps> = ({
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!compareOpen) setIsDragOver(true);
+    if (!compareOpen && Array.from(e.dataTransfer.types).includes('Files')) setIsDragOver(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragOver(false);
+    if(!(e.relatedTarget instanceof Node)||!e.currentTarget.contains(e.relatedTarget))setIsDragOver(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {

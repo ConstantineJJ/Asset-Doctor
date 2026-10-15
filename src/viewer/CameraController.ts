@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
+import {cameraFitDistance} from './CameraFit';
 
 export class CameraController {
   public camera: THREE.PerspectiveCamera;
@@ -39,15 +40,13 @@ export class CameraController {
     box.getSize(size);
 
     const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.05);
-    const fov = this.camera.fov * (Math.PI / 180);
-    let cameraDistance = (maxDim / 2) / Math.tan(fov / 2);
-    cameraDistance = Math.max(cameraDistance * offsetFactor, 0.2);
+    const dir = new THREE.Vector3(1, 0.75, 1.25).normalize();
+    const cameraDistance = cameraFitDistance(box,this.camera,dir,offsetFactor);
 
     // 3. Update OrbitControls.target to the new center
     this.controls.target.copy(center);
 
     // 4. Position camera at a valid distance
-    const dir = new THREE.Vector3(1, 0.75, 1.25).normalize();
     this.camera.position.copy(center).add(dir.multiplyScalar(cameraDistance));
 
     // 5. Update near/far clipping planes adaptively
@@ -109,11 +108,10 @@ export class CameraController {
     box.getSize(size);
 
     const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.05);
-    const fov = this.camera.fov * (Math.PI / 180);
-    const cameraDistance = Math.max(((maxDim / 2) / Math.tan(fov / 2)) * offsetFactor, 0.2);
+    const dir = new THREE.Vector3(1, 0.75, 1.25).normalize();
+    const cameraDistance = cameraFitDistance(box,this.camera,dir,offsetFactor);
 
     this.controls.target.copy(center);
-    const dir = new THREE.Vector3(1, 0.75, 1.25).normalize();
     this.camera.position.copy(center).add(dir.multiplyScalar(cameraDistance));
 
     this.camera.near = Math.max(0.001, maxDim / 2000);
@@ -151,9 +149,6 @@ export class CameraController {
     box.getSize(size);
 
     const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.2);
-    const fov = this.camera.fov * (Math.PI / 180);
-    let cameraDistance = (maxDim / 2) / Math.tan(fov / 2);
-    cameraDistance = Math.max(cameraDistance * offsetFactor, 0.3);
 
     // 3. Update OrbitControls.target to the new center
     this.controls.target.copy(center);
@@ -164,6 +159,7 @@ export class CameraController {
       currentDir.set(1, 0.75, 1.25);
     }
     currentDir.normalize();
+    const cameraDistance = Math.max(.3,cameraFitDistance(box,this.camera,currentDir,offsetFactor));
     this.camera.position.copy(center).add(currentDir.multiplyScalar(cameraDistance));
 
     // 5. Update near/far

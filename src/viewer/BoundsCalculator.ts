@@ -41,10 +41,12 @@ export class BoundsCalculator {
       return this.computeBoneBounds(object as THREE.Bone);
     }
 
-    // Traverse all descendants
-    object.traverse((node) => {
-      if (node.name?.startsWith('__ascope_internal_')) return;
-      if (!node.visible) return;
+    // Prune entire hidden/helper subtrees, matching renderer visibility.
+    const visitVisible=(node:THREE.Object3D,visit:(node:THREE.Object3D)=>void)=>{
+      if(!node.visible||node.name?.startsWith('__ascope_internal_'))return;
+      visit(node);for(const child of node.children)visitVisible(child,visit);
+    };
+    visitVisible(object,(node) => {
 
       if ((node as THREE.SkinnedMesh).isSkinnedMesh) {
         isSkinned = true;
@@ -53,8 +55,8 @@ export class BoundsCalculator {
         if (!skinnedBox.isEmpty()) {
           worldBox.union(skinnedBox);
         }
-      } else if ((node as THREE.Mesh).isMesh) {
-        const mesh = node as THREE.Mesh;
+      } else if ((node as THREE.Mesh).isMesh || (node as THREE.Line).isLine || (node as THREE.Points).isPoints) {
+        const mesh = node as THREE.Mesh | THREE.Line | THREE.Points;
         if (mesh.geometry && mesh.geometry.attributes.position) {
           foundGeometry = true;
           mesh.geometry.computeBoundingBox();
@@ -68,8 +70,7 @@ export class BoundsCalculator {
 
     // If no geometry found (e.g. pure bone hierarchy or empty group), use positions
     if (!foundGeometry || worldBox.isEmpty()) {
-      object.traverse((node) => {
-        if (node.name?.startsWith('__ascope_internal_')) return;
+      visitVisible(object,(node) => {
         const pos = new THREE.Vector3();
         node.getWorldPosition(pos);
         if (!Number.isNaN(pos.x) && !Number.isNaN(pos.y) && !Number.isNaN(pos.z)) {

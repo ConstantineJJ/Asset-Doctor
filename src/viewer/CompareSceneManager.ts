@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {cameraFitDistance} from './CameraFit';
 import {retainModelResources,disposeModelResources} from '../loaders/ModelResources';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BoundsCalculator } from './BoundsCalculator';
@@ -616,11 +617,13 @@ export class CompareSceneManager {
   }
 
   private frameSlot(slot: SlotRuntime) {
+    const index=this.assets.findIndex(asset=>asset.id===slot.asset.id);
+    const cell=this.currentLayout(this.container.clientWidth||1,this.container.clientHeight||1).find(cell=>cell.index===index);
+    if(cell)slot.camera.aspect=Math.max(cell.width,1)/Math.max(cell.height,1);
     const center = slot.bounds.getCenter(new THREE.Vector3());
-    const size = slot.bounds.getSize(new THREE.Vector3());
-    const radius = Math.max(size.length() * 0.5, 0.05);
-    const distance = radius / Math.tan(THREE.MathUtils.degToRad(slot.camera.fov * 0.5)) * 1.25;
-    slot.camera.position.copy(center).add(new THREE.Vector3(0.75, 0.45, 1).normalize().multiplyScalar(distance));
+    const direction=new THREE.Vector3(0.75,0.45,1).normalize();
+    const distance=cameraFitDistance(slot.bounds,slot.camera,direction);
+    slot.camera.position.copy(center).add(direction.multiplyScalar(distance));
     slot.camera.near = Math.max(distance / 1000, 0.001);
     slot.camera.far = Math.max(distance * 100, 100);
     slot.camera.updateProjectionMatrix();
@@ -830,16 +833,14 @@ export class CompareSceneManager {
     if (!this.lineup || this.lineup.bounds.isEmpty()) return;
     const bounds = this.lineup.bounds;
     const center = bounds.getCenter(new THREE.Vector3());
-    const size = bounds.getSize(new THREE.Vector3());
     if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) {
       center.set(0, 1, 0);
     }
-    const len = size.length();
-    const radius = Number.isFinite(len) && len > 0.01 ? Math.max(len * 0.5, 0.1) : 1;
-    const fovRad = THREE.MathUtils.degToRad(this.lineup.camera.fov * 0.5);
-    const distance = Math.max((radius / Math.tan(fovRad)) * 1.25, 0.5);
+    this.lineup.camera.aspect=(this.container.clientWidth||1)/(this.container.clientHeight||1);
+    const direction=new THREE.Vector3(0.2,0.15,1).normalize();
+    const distance=Math.max(cameraFitDistance(bounds,this.lineup.camera,direction),.5);
 
-    this.lineup.camera.position.copy(center).add(new THREE.Vector3(0.2, 0.15, 1).normalize().multiplyScalar(distance));
+    this.lineup.camera.position.copy(center).add(direction.multiplyScalar(distance));
     this.lineup.camera.near = Math.max(distance / 2000, 0.001);
     this.lineup.camera.far = Math.max(distance * 100, 100);
     this.lineup.camera.updateProjectionMatrix();
