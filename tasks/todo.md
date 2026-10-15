@@ -14,3 +14,11 @@
 - [x] Copy-on-write streams, малые signatures и точная animation equality, прежний limit 128 MiB, pre/post budget guards.
 - [x] Явное logging manual/Gizmo errors с контекстом, атомарный отказ Apply и настоящего drag при fault injection.
 - [x] Финальные gates: unit 364/364, production 101/101, owner 1/1, log visual 1/1, native 4/4; Windows build, QA и отдельный комплект 2.0.12. F09 не включён.
+- [x] Владелец принял 2.0.12: функции работают штатно; F08 и замечание о поворотах закрыты.
+
+## F09 — профили диагностики / 2.0.13
+
+- [x] RU/EN selector семи профилей, видимый активный профиль, переход к оценке пригодности.
+- [x] Только cached Fitness; технические findings и UNKNOWN сохраняются без повторного Health/topology.
+- [x] Single/bulk report с текущим профилем; обработка смены профиля во время topology.
+- [ ] Полный production regression, visual QA compact/4K, native gates и новая поставка для ручной приёмки.

@@ -225,7 +225,6 @@ export function evaluateSkinningIssues(
   profileId: DiagnosticProfileId = 'general'
 ): HealthIssue[] {
   const issues: HealthIssue[] = [];
-  const profile = getDiagnosticProfile(profileId);
 
   if (stats.skeletonCount === 0) {
     issues.push({
@@ -252,24 +251,7 @@ export function evaluateSkinningIssues(
     count: stats.totalBones,
   });
 
-  if (stats.maxInfluencesPerVertex > profile.maxBoneInfluencesWarning) {
-    issues.push({
-      id: 'skin-max-influences',
-      category: 'Skinning',
-      severity: 'WARNING',
-      title: `Max bone influences: ${stats.maxInfluencesPerVertex}`,
-      description: `Vertices use up to ${stats.maxInfluencesPerVertex} active bone weights, above the ${profile.label} reference threshold of ${profile.maxBoneInfluencesWarning}.`,
-      count: stats.maxInfluencesPerVertex,
-    });
-  } else if (stats.maxInfluencesPerVertex > 0) {
-    issues.push({
-      id: 'skin-influences-ok',
-      category: 'Skinning',
-      severity: 'OK',
-      title: `Bone influences compliant (${stats.maxInfluencesPerVertex}/vertex)`,
-      description: `Bone influence count is within the ${profile.label} reference threshold (${profile.maxBoneInfluencesWarning}/vertex).`,
-    });
-  }
+  issues.push(...evaluateInfluenceFit(stats, profileId));
 
   if (stats.zeroWeightVertices > 0) {
     const first = stats.zeroWeightLocations?.[0];
@@ -610,6 +592,21 @@ function evaluateIntegrity(summary: AssetSummary): HealthIssue[] {
   }];
 }
 
+function evaluateInfluenceFit(stats: SkinningStats, profileId: DiagnosticProfileId): HealthIssue[] {
+  if (stats.skeletonCount === 0 || stats.maxInfluencesPerVertex <= 0) return [];
+  const profile = getDiagnosticProfile(profileId);
+  return [stats.maxInfluencesPerVertex > profile.maxBoneInfluencesWarning ? {
+    id: 'skin-max-influences', category: 'Skinning', severity: 'WARNING', layer: 'Fitness',
+    title: `Max bone influences: ${stats.maxInfluencesPerVertex}`,
+    description: `Vertices use up to ${stats.maxInfluencesPerVertex} active bone weights, above the ${profile.label} reference threshold of ${profile.maxBoneInfluencesWarning}.`,
+    count: stats.maxInfluencesPerVertex,
+  } : {
+    id: 'skin-influences-ok', category: 'Skinning', severity: 'OK', layer: 'Fitness',
+    title: `Bone influences compliant (${stats.maxInfluencesPerVertex}/vertex)`,
+    description: `Bone influence count is within the ${profile.label} reference threshold (${profile.maxBoneInfluencesWarning}/vertex).`,
+  }];
+}
+
 function evaluateProfileExpectations(
   summary: AssetSummary,
   profileId: DiagnosticProfileId
@@ -728,6 +725,20 @@ function decorateIssue(issue: HealthIssue, profileId: DiagnosticProfileId): Heal
 }
 
 export class HealthEngine {
+  /** Reinterpret only cached target-fit facts. Preserve technical findings, including failed passes. */
+  public static reinterpretFitness(
+    current: HealthIssue[],
+    params: Pick<HealthAggregateParams, 'summary' | 'skeleton' | 'performance'> & {profileId: DiagnosticProfileId}
+  ): HealthIssue[] {
+    const performance = Array.isArray(params.performance) ? params.performance : params.performance?.issues ?? [];
+    const fitness = [
+      ...evaluateInfluenceFit(params.skeleton, params.profileId),
+      ...evaluateProfileExpectations(params.summary, params.profileId),
+      ...performance,
+    ].map(issue => decorateIssue(issue, params.profileId)).filter(issue => issue.layer === 'Fitness');
+    return [...current.filter(issue => issue.layer !== 'Fitness'), ...fitness];
+  }
+
   public static aggregate(params: HealthAggregateParams): HealthIssue[] {
     const issues: HealthIssue[] = [];
     const profileId = params.profileId ?? 'general';

@@ -8,6 +8,8 @@ import type {
 } from '../types';
 import { HealthEngine, aggregateTopologyIssues } from '../health/HealthEngine';
 import { analyzePerformance } from './PerformanceAnalyzer';
+import { DIAGNOSTIC_PROFILES } from '../health/DiagnosticProfiles';
+import type {DiagnosticProfileId} from '../types';
 
 export interface DiagnosticCoreTestResult {
   name: string;
@@ -81,6 +83,23 @@ function aggregate(
 
 export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
   const results: DiagnosticCoreTestResult[] = [];
+
+  for (const profileId of Object.keys(DIAGNOSTIC_PROFILES) as DiagnosticProfileId[]) {
+    const summary = makeSummary({triangleCount:350000,primitiveCount:70,skeletonCount:1,boneCount:10,clipCount:0});
+    const skeleton = {...emptySkeleton,skeletonCount:1,totalBones:10,maxInfluencesPerVertex:6,zeroWeightVertices:2};
+    const textures:TextureInfo[] = [{uuid:'profile-texture',name:'Large',width:8192,height:8192,format:'RGBA',colorSpace:'srgb',uncompressedBytesEstimate:268435456,materialsUsed:[]}];
+    const params = {summary,skeleton,textures,materials:[],topology:[]};
+    const previous = HealthEngine.aggregate({...params,profileId:'general',performance:analyzePerformance(summary,textures,0,'general')});
+    const unknown:HealthIssue={id:'worker-failure',category:'Topology',layer:'Health',severity:'UNKNOWN',title:'Unavailable',description:'Controlled failure'};
+    previous.push(unknown);
+    const original = JSON.stringify(previous);
+    const next = HealthEngine.reinterpretFitness(previous,{summary,skeleton,profileId,performance:analyzePerformance(summary,textures,0,profileId)});
+    const expected = HealthEngine.aggregate({...params,profileId,performance:analyzePerformance(summary,textures,0,profileId)}).filter(issue=>issue.layer==='Fitness');
+    const technical = previous.filter(issue=>issue.layer!=='Fitness');
+    const actualTechnical = next.filter(issue=>issue.layer!=='Fitness');
+    results.push({name:`F09 cached Fitness ${profileId}`,description:'Profile rules match a full report while preserving technical findings, failure evidence and input data.',expected:'Same Fitness; identical technical object references; immutable input',actual:next.map(issue=>issue.id).join(','),
+      passed:JSON.stringify(next.filter(issue=>issue.layer==='Fitness'))===JSON.stringify(expected)&&technical.length===actualTechnical.length&&technical.every((issue,index)=>issue===actualTechnical[index])&&next.includes(unknown)&&JSON.stringify(previous)===original});
+  }
 
   {
     const issues = aggregate(makeSummary());

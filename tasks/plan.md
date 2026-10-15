@@ -10,3 +10,11 @@
 6. **Проверка и поставка.** Проверять каждый increment и фиксировать отдельным commit. Затем TypeScript, полный unit/browser regression, headless visual evidence на нескольких размерах, Windows/NSIS build, новая неизменяемая поставка. Результаты native ручной приёмки не подменяются headless проверками. F09 остаётся отдельным пунктом.
 
 Приоритет — сохранить существующие source fidelity, cancellation, resource ownership и ≤100 ms gates. Не расширять рефакторинг на весь App, не переустраивать существующие инструменты редактирования.
+
+## F09 — диагностический профиль / 2.0.13
+
+Приёмка 2.0.12 принята владельцем 15 октября: функции штатны. В новых журналах нет новых ошибок приложения; 66 tiny index components — ручное замечание модели, не регрессия программы.
+
+1. Дать семь существующих профилей через доступный RU/EN selector в Inspector, показать активный профиль и переход к оценке пригодности.
+2. Пересчитывать только Fitness из сохранённых метрик. Технические findings, UNKNOWN от неудачного worker, scan revision, source и история сохраняются. Незавершённая topology использует последний выбранный профиль при завершении.
+3. Проверить General/Mobile и все профили, single/bulk diagnostic report, in-flight/error paths, compact/4K UI. Затем полный fresh production regression, unit/native gates, Windows/NSIS build и отдельная поставка. Desktop EXE/installer автоматически не запускать.

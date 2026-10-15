@@ -56,6 +56,8 @@ import { getRepairOperationForIssue } from '../heal/framework/RepairRegistry';
 import { buildRepairQueueCandidates } from '../heal/RepairQueue';
 import { HealReportPanel } from './HealReportPanel';
 import { AnimationClipList } from './AnimationClipList';
+import { DiagnosticProfilePanel } from './DiagnosticProfilePanel';
+import {reportableFinding} from '../diagnostics/DiagnosticReport';
 import type {AnimationClipInfo} from '../types';
 
 interface InspectorPanelProps {
@@ -129,6 +131,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onSetSkeletonXray,
   onResetPreviewPose,
   onIsolateSelectedSkinnedMesh,
+  diagnosticProfileId, onSetDiagnosticProfile,
   lightingConfig,
   onUpdateLighting,
   onFocusIssue,onLogIssue,
@@ -441,6 +444,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           <span className="truncate">{t('inspector.performance')}</span>
         </button>
       </div>
+
+      {summary && <DiagnosticProfilePanel profileId={diagnosticProfileId} onChange={onSetDiagnosticProfile}
+        issues={healthIssues} disabled={healBusy} onViewFit={()=>setActiveTab('performance')}/>}
 
       {/* TAB 1: ASSET HEALTH & DETERMINISTIC DIAGNOSTICS */}
       {activeTab === 'health' && (
@@ -1348,12 +1354,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
-                  Profile Fit
+                  {language === 'ru' ? 'Пригодность для профиля' : 'Profile fit'}
                 </h4>
-                <span className="text-[9px] text-gray-500 font-mono">{fitnessIssues.length} RULE(S)</span>
+                <span className="text-[9px] text-gray-500 font-mono">{language === 'ru' ? `Проверок: ${fitnessIssues.length}` : `${fitnessIssues.length} RULE(S)`}</span>
               </div>
               <p className="text-[10px] leading-relaxed text-gray-500">
-                Profile-dependent interpretation is kept separate from structural Health.
+                {language === 'ru' ? 'Соответствие выбранному применению. Эти оценки отделены от технического состояния модели.' : 'Fit for the selected use. These judgments are separate from technical model health.'}
               </p>
               <div className="space-y-1.5">
                 {fitnessIssues.map((issue) => (
@@ -1376,6 +1382,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                         </div>
                         <div className="mt-0.5 text-[11px] font-medium text-gray-200">{localizedIssue(issue).title}</div>
                       </div>
+                      {reportableFinding(issue) && <button onClick={()=>onLogIssue(issue)}
+                        aria-label={language === 'ru' ? 'Сохранить отчёт карточки' : 'Log this finding'}
+                        title={language === 'ru' ? 'Сохранить отчёт карточки' : 'Log this finding'}
+                        className="p-1 rounded border border-cyan-700 text-cyan-300 cursor-pointer"><ScrollText className="w-3.5 h-3.5"/></button>}
                     </div>
                     <p className="pl-6 text-[10px] leading-relaxed text-gray-400">{localizedIssue(issue).description}</p>
                   </div>

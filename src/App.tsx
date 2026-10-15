@@ -381,8 +381,18 @@ export function App() {
   // and without changing the viewport mount callback identity.
   useEffect(() => {
     diagnosticProfileIdRef.current = diagnosticProfileId;
-    rebuildDiagnosticReport(diagnosticProfileId);
-  }, [diagnosticProfileId, rebuildDiagnosticReport]);
+    const snapshot = analysisSnapshotRef.current;
+    if (!snapshot || snapshot.revision !== analysisRunIdRef.current) return;
+    const issues = HealthEngine.reinterpretFitness(healthIssuesRef.current, {
+      summary: snapshot.summary,
+      skeleton: snapshot.skeleton,
+      performance: analyzePerformance(snapshot.summary, snapshot.textures, snapshot.totalTracks, diagnosticProfileId),
+      profileId: diagnosticProfileId,
+    });
+    healthIssuesRef.current = issues;
+    setHealthIssues(issues);
+    systemLog.record('info', 'diagnostics', 'profile_changed', {mode: diagnosticProfileId, revision: snapshot.revision});
+  }, [diagnosticProfileId]);
 
   // Analysis Pipeline Execution
   const runAnalysisPipeline = useCallback(

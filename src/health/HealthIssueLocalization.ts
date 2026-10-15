@@ -6,6 +6,7 @@ import type {
   Repairability,
 } from '../types';
 import type { AppLanguage } from '../i18n';
+import {getDiagnosticProfile} from './DiagnosticProfiles';
 
 type LocalizedFields = Partial<Pick<
   HealthIssue,
@@ -18,6 +19,36 @@ const count = (issue: HealthIssue) => issue.count ?? 0;
 const evidenceSample = (issue: HealthIssue) => issue.evidence ? `Образцы / технические данные: ${issue.evidence}` : undefined;
 
 const RU: Record<string, Translator> = {
+  'fitness-rig-expected-missing': () => ({
+    title: 'Для выбранного профиля ожидается скелет',
+    description: 'Скелет не обнаружен. Для этого профиля предполагается персонаж со скелетом; отсутствие скелета само по себе не является дефектом геометрии.',
+    suggestedAction: 'Уточните назначение модели. Добавляйте скелет только если он нужен для выбранного применения.',
+  }),
+  'fitness-animation-expected-missing': () => ({
+    title: 'Для выбранного профиля ожидаются анимации',
+    description: 'Анимационные клипы не обнаружены. Модель может быть исправна, но ещё не готова к выбранному применению.',
+    suggestedAction: 'Проверьте, нужны ли анимации для этой модели.',
+  }),
+  'perf-draw-calls-high': i => ({
+    title: 'Много вызовов отрисовки для выбранного профиля',
+    description: `Оценка: ${count(i)}. Ориентир профиля: ${getDiagnosticProfile(i.profileId).drawCallWarning}. Это оценка пригодности, а не повреждение модели.`,
+  }),
+  'perf-draw-calls-ok': i => ({
+    title: 'Вызовы отрисовки в пределах ориентира профиля',
+    description: `Оценка: ${count(i)}. Ориентир профиля: ${getDiagnosticProfile(i.profileId).drawCallWarning}.`,
+  }),
+  'perf-ultra-large-textures': i => ({
+    title: 'Текстуры превышают ориентир профиля',
+    description: `Текстур: ${count(i)}. Ориентир максимальной стороны: ${getDiagnosticProfile(i.profileId).textureDimensionWarning} пикселей.`,
+  }),
+  'perf-large-textures-info': i => ({
+    title: 'Текстуры крупнее 2048 пикселей',
+    description: `Текстур: ${count(i)}. Они остаются в пределах ориентира профиля: ${getDiagnosticProfile(i.profileId).textureDimensionWarning} пикселей.`,
+  }),
+  'perf-triangle-high': i => ({
+    title: 'Много треугольников для выбранного профиля',
+    description: `Измерено: ${count(i).toLocaleString('ru-RU')}. Ориентир профиля: ${getDiagnosticProfile(i.profileId).triangleWarning.toLocaleString('ru-RU')}. Превышение бюджета не означает повреждение сетки.`,
+  }),
   'integrity-core-readable': () => ({
     title: 'Основные данные сцены структурно корректны',
     description: 'Иерархия сцены, количество meshes и данные bounding box успешно разобраны и содержат конечные числовые значения.',
