@@ -15,6 +15,13 @@
 
 - Локальные сохраняемые назначения для Frame/Focus, Play/Pause, Wireframe, Undo, rig Redo, Open, Skeleton, Grid, Auto Rotate и будущих команд журналов. Settings: запись сочетания, отключение, reset и видимый отказ конфликта/недоступного сочетания/storage failure. Используются physical codes для русской раскладки.
 - Единственный Doctor shortcut handler; удалён захватывающий Space handler AnimationTimeline. Compare владеет своими Play/Frame/Rotation/Open; общий skeleton/render остаётся общим. Modal/input/composition/repeat и keyboard activation кнопок защищены.
-- TypeScript PASS; unit/integration **344/344 PASS**. Browser: новый тест сначала показал отсутствие назначения, затем custom/persistence/conflicts и modal/Compare playback **2/2 PASS**; ещё пять Compare usability проверок PASS. Первоначальный тест ошибочно ожидал Pause-state по умолчанию: fixture запускает клип автоматически; тест теперь явно останавливает воспроизведение до открытия Settings.
+- TypeScript PASS; unit/integration **344/344 PASS**. Browser: новый тест сначала показал отсутствие назначения, затем custom/persistence/conflicts и modal/Compare playback **2/2 PASS**; ещё пять Compare usability проверок PASS. Первоначальный тест ошибочно ожидал остановленное воспроизведение по умолчанию: fixture запускает клип автоматически; тест теперь явно останавливает воспроизведение до открытия Settings.
+
+## Increment 3: пол из пакета владельца
+
+- Найдены все 11 PNG после перемещения архива в указанную владельцем папку. SHA256 каждого `public/tiles/*.png` совпадает с соответствующим entry Tiles.zip. Изображения не переработаны; размеры 1408×768 / 2048×2048, inventory в `public/tiles/source-manifest.json`.
+- Grass/Road/Sand заменяют прежние процедурные варианты в тех же IDs; удалены их старые генераторы. Остальные восемь изображений добавлены вариантами. Единый каталог Doctor/Compare, 19 уникальных поверхностей включая Grid/None и прежние остальные полы. Несквадратные изображения сохраняют пропорции повторения. Это цветовые карты; normal/roughness данные не выдумывались.
+- Загружаются только активные изображения. Ref-counted pool делит Texture/Bitmap между Doctor/Compare, отменяет pending fetch и закрывает bitmap после последнего release, включая позднее завершение decode. Повторный выбор того же пола не перезагружает изображение. Старые model/export данные не меняются.
+- TypeScript PASS; unit/integration **346/346 PASS**, focused floor + F06 ownership **4/4 PASS** до усиления ожидания реального decode в visual capture. Во время разработки исправлено затенение имени decoder в default constructor; промежуточные отказы сохранены. Финальная production проверка ещё впереди.
 
 Остальные increments и полная поставка в работе. Windows native EXE автоматически не запускается. F09 не включён.

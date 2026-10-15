@@ -1,0 +1,79 @@
+[
+  {
+    "Name": "City_map.png",
+    "Bytes": 2259260,
+    "Width": 1408,
+    "Height": 768,
+    "SHA256": "EC3ED4F4A7B18F12EA3F909322A11022B478C8E0EB435E7BF6EC574D44177F5D"
+  },
+  {
+    "Name": "Desert_clean.png",
+    "Bytes": 5759512,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "A99A57106A3BDE282B96ABFF50861D644F06FEA4B81651ED6D77304D69577C0F"
+  },
+  {
+    "Name": "Forest_floor_2.png",
+    "Bytes": 6759501,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "5338683AD5005953FF321D8DF9C15A3B37F8F9FFC6734E503C55BB44705E44D9"
+  },
+  {
+    "Name": "Green_grass_2.png",
+    "Bytes": 6424335,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "66739A21DBD7280BAAD75151562743CB56C858DCBD080E72F528760236E83234"
+  },
+  {
+    "Name": "sand_rock2.png",
+    "Bytes": 1946983,
+    "Width": 1408,
+    "Height": 768,
+    "SHA256": "02751C2B8D3F8DEF0804AF090F152435F01D35E7D24D3CE31B05673DBD07D0E6"
+  },
+  {
+    "Name": "T3D_asphalt_surface_3.png",
+    "Bytes": 3892553,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "68A2E7643A1670BAECE25F2F9B00E4DA3919E01003A5BAEE24E9DDE3F5F95F01"
+  },
+  {
+    "Name": "T3D_Grass_Dry.png",
+    "Bytes": 9707132,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "3E1056EDA05009DFA9F03D74F18A1C085FE9CD71A7809617161DB94A7DCB157D"
+  },
+  {
+    "Name": "T3D_Green_Grass.png",
+    "Bytes": 9024685,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "8961987B86A32D0625067F27188221EB773992DAA9380354D5CED4A051310A79"
+  },
+  {
+    "Name": "T3D_Rock_Floor.png",
+    "Bytes": 5766281,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "1230BE9353506BC2D305CCD0233514F312810437CC90A4C878C5438A6C61E659"
+  },
+  {
+    "Name": "T3D_Small_Rock_Ground.png",
+    "Bytes": 9139773,
+    "Width": 2048,
+    "Height": 2048,
+    "SHA256": "BF09B5896F57AEF3DA9C462023651C0AF9E47DE9712BF52254ED13DD9B933580"
+  },
+  {
+    "Name": "TechnoDesert.png",
+    "Bytes": 2145496,
+    "Width": 1408,
+    "Height": 768,
+    "SHA256": "290958C2E3B4997DBBDB78C4B7198769CD74D41EBECF4D410F5FD9A42D01591B"
+  }
+]

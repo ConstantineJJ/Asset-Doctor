@@ -504,7 +504,7 @@ export type LightingPreset =
   | 'rim-light'
   | 'dark-studio';
 
-export type SurfaceType =
+export type SurfaceType = typeof import('../viewer/SurfaceCatalog').floorTiles[number]['id']
   | 'none'
   | 'grid'
   | 'grass'

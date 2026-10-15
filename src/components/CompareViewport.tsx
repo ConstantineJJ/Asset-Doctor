@@ -1,3 +1,4 @@
+import {surfaceChoices} from '../viewer/SurfaceCatalog';
 import {shortcuts,shortcutEventAllowed} from '../platform/Shortcuts';
 import {markStartup} from '../platform/StartupTrace';
 import {assertMemoryBytes,memoryLimits} from '../performance/MemoryBudget';
@@ -624,17 +625,7 @@ export const CompareViewport: React.FC<CompareViewportProps> = ({
               className="bg-transparent text-gray-300 outline-none cursor-pointer"
               title="Выбор поверхности пола"
             >
-              <option value="grid" className="bg-[#1e2127]">Сетка</option>
-              <option value="tile" className="bg-[#1e2127]">✨ Плитка (глянец)</option>
-              <option value="cobblestone" className="bg-[#1e2127]">🏛️ Брусчатка</option>
-              <option value="factory" className="bg-[#1e2127]">🏭 Завод / Цех</option>
-              <option value="moon" className="bg-[#1e2127]">🌑 Лунная поверхность</option>
-              <option value="countryside" className="bg-[#1e2127]">🌾 Сельская местность</option>
-              <option value="grass" className="bg-[#1e2127]">🌱 Газон</option>
-              <option value="wood" className="bg-[#1e2127]">🪵 Деревянный пол</option>
-              <option value="road" className="bg-[#1e2127]">🛣️ Дорога / Тротуар</option>
-              <option value="sand" className="bg-[#1e2127]">🏖️ Песок</option>
-              <option value="none" className="bg-[#1e2127]">Без пола</option>
+              {surfaceChoices.map(item=><option key={item.id} value={item.id} className="bg-[#1e2127]">{item.icon} {item.labelRu}</option>)}
             </select>
           </div>
 

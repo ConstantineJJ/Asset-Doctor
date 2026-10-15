@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { SurfaceType } from '../types';
+import {floorTiles} from './SurfaceCatalog';
+import {floorTextures,type FloorTextureLease} from './FloorTexturePool';
 
 export class SurfaceManager {
   private scene: THREE.Scene;
@@ -11,6 +13,7 @@ export class SurfaceManager {
   private groundHeight: number = 0;
   private groundRadius: number = 35;
   private ownedEnvironment:THREE.Texture|null=null;
+  private tileLease:FloorTextureLease|null=null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -25,6 +28,9 @@ export class SurfaceManager {
   }
 
   public setSurface(type: SurfaceType) {
+    if(this.disposed)return;
+    if(type===this.currentSurface&&(this.surfaceMesh||type==='grid'||type==='none'))return;
+    this.tileLease?.release();this.tileLease=null;
     this.currentSurface = type;
 
     // Remove existing surface mesh
@@ -44,7 +50,14 @@ export class SurfaceManager {
     }
 
     this.ensureSceneEnvironment();
-    const { material } = this.createSurfaceMaterial(type);
+    const tile=floorTiles.find(item=>item.id===type);
+    const material=tile?new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.95}):this.createSurfaceMaterial(type).material;
+    if(tile&&material instanceof THREE.MeshStandardMaterial){
+      const url=new URL(`${import.meta.env.BASE_URL}tiles/${tile.file}`,window.location.href).href;
+      const lease=floorTextures.acquire(url,tile.repeat);this.tileLease=lease;
+      lease.ready.then(()=>{if(this.tileLease!==lease||this.disposed)return;material.map=lease.texture;material.needsUpdate=true;})
+        .catch(error=>{if(this.tileLease===lease&&!this.disposed)console.warn(`Floor texture unavailable: ${tile.file}`,error);});
+    }
     const geometry = new THREE.PlaneGeometry(70, 70, 64, 64);
     geometry.rotateX(-Math.PI / 2);
 
@@ -61,12 +74,6 @@ export class SurfaceManager {
 
   private createSurfaceMaterial(type: SurfaceType): { material: THREE.Material } {
     switch (type) {
-      case 'grass':
-        return this.createGrassMaterial();
-      case 'road':
-        return this.createRoadMaterial();
-      case 'sand':
-        return this.createSandMaterial();
       case 'tile':
         return this.createTileMaterial();
       case 'wood':
@@ -84,333 +91,6 @@ export class SurfaceManager {
     }
   }
 
-  // 1. Grass / Lawn (Газон)
-  private createGrassMaterial() {
-    const diffuseKey = 'grass_diffuse';
-    const bumpKey = 'grass_bump';
-
-    let diffuseTex = SurfaceManager.cachedTextures.get(diffuseKey);
-    let bumpTex = SurfaceManager.cachedTextures.get(bumpKey);
-
-    if (!diffuseTex || !bumpTex) {
-      const size = 512;
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d')!;
-
-      const bumpCanvas = document.createElement('canvas');
-      bumpCanvas.width = size;
-      bumpCanvas.height = size;
-      const bumpCtx = bumpCanvas.getContext('2d')!;
-
-      // Rich deep turf green base
-      ctx.fillStyle = '#2d571f';
-      ctx.fillRect(0, 0, size, size);
-
-      bumpCtx.fillStyle = '#808080';
-      bumpCtx.fillRect(0, 0, size, size);
-
-      // Noise underlayer
-      const imgData = ctx.getImageData(0, 0, size, size);
-      const bumpData = bumpCtx.getImageData(0, 0, size, size);
-      const data = imgData.data;
-      const bData = bumpData.data;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const noise = (Math.random() - 0.5) * 28;
-        data[i] = Math.min(255, Math.max(0, data[i] + noise * 0.7)); // R
-        data[i + 1] = Math.min(255, Math.max(0, data[i + 1] + noise * 1.3)); // G
-        data[i + 2] = Math.min(255, Math.max(0, data[i + 2] + noise * 0.5)); // B
-        const b = 128 + (Math.random() - 0.5) * 50;
-        bData[i] = b;
-        bData[i + 1] = b;
-        bData[i + 2] = b;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      bumpCtx.putImageData(bumpData, 0, 0);
-
-      // Paint dense blades of grass with varied hues
-      const bladeColors = [
-        '#3b7324', '#488b2c', '#579e32', '#68b33a', '#2c531a', '#79c742', '#355f20'
-      ];
-
-      for (let i = 0; i < 7000; i++) {
-        const x = Math.random() * size;
-        const y = Math.random() * size;
-        const len = 4 + Math.random() * 8;
-        const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.9;
-        const col = bladeColors[Math.floor(Math.random() * bladeColors.length)];
-
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1 + Math.random() * 1.2;
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
-        ctx.stroke();
-
-        bumpCtx.strokeStyle = Math.random() > 0.5 ? '#ffffff' : '#333333';
-        bumpCtx.lineWidth = 1;
-        bumpCtx.beginPath();
-        bumpCtx.moveTo(x, y);
-        bumpCtx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
-        bumpCtx.stroke();
-      }
-
-      diffuseTex = new THREE.CanvasTexture(canvas);
-      diffuseTex.wrapS = THREE.RepeatWrapping;
-      diffuseTex.wrapT = THREE.RepeatWrapping;
-      diffuseTex.repeat.set(16, 16);
-
-      bumpTex = new THREE.CanvasTexture(bumpCanvas);
-      bumpTex.wrapS = THREE.RepeatWrapping;
-      bumpTex.wrapT = THREE.RepeatWrapping;
-      bumpTex.repeat.set(16, 16);
-
-      SurfaceManager.cachedTextures.set(diffuseKey, diffuseTex);
-      SurfaceManager.cachedTextures.set(bumpKey, bumpTex);
-    }
-
-    const material = new THREE.MeshStandardMaterial({
-      map: diffuseTex,
-      bumpMap: bumpTex,
-      bumpScale: 0.05,
-      roughness: 0.88,
-      metalness: 0.04,
-      shadowSide: THREE.DoubleSide,
-    });
-
-    return { material };
-  }
-
-  // 2. Road & Sidewalk (Дорога / тротуар)
-  private createRoadMaterial() {
-    const diffuseKey = 'road_diffuse';
-    const bumpKey = 'road_bump';
-
-    let diffuseTex = SurfaceManager.cachedTextures.get(diffuseKey);
-    let bumpTex = SurfaceManager.cachedTextures.get(bumpKey);
-
-    if (!diffuseTex || !bumpTex) {
-      const size = 512;
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d')!;
-
-      const bumpCanvas = document.createElement('canvas');
-      bumpCanvas.width = size;
-      bumpCanvas.height = size;
-      const bumpCtx = bumpCanvas.getContext('2d')!;
-
-      // Left portion: Asphalt roadway (0..340px)
-      // Right portion: Concrete curbed sidewalk with paving blocks (340..512px)
-      const asphaltWidth = 350;
-
-      // Asphalt
-      ctx.fillStyle = '#26282b';
-      ctx.fillRect(0, 0, asphaltWidth, size);
-
-      bumpCtx.fillStyle = '#808080';
-      bumpCtx.fillRect(0, 0, asphaltWidth, size);
-
-      // Fine asphalt pebbles
-      const imgData = ctx.getImageData(0, 0, asphaltWidth, size);
-      const bumpData = bumpCtx.getImageData(0, 0, asphaltWidth, size);
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        const noise = (Math.random() - 0.5) * 35;
-        imgData.data[i] = Math.min(255, Math.max(0, imgData.data[i] + noise));
-        imgData.data[i + 1] = Math.min(255, Math.max(0, imgData.data[i + 1] + noise));
-        imgData.data[i + 2] = Math.min(255, Math.max(0, imgData.data[i + 2] + noise));
-
-        const b = 128 + (Math.random() - 0.5) * 60;
-        bumpData.data[i] = b;
-        bumpData.data[i + 1] = b;
-        bumpData.data[i + 2] = b;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      bumpCtx.putImageData(bumpData, 0, 0);
-
-      // Road markings: crisp dashed line in center of asphalt
-      ctx.fillStyle = '#e8eaed';
-      ctx.fillRect(asphaltWidth / 2 - 4, 30, 8, 80);
-      ctx.fillRect(asphaltWidth / 2 - 4, 180, 8, 80);
-      ctx.fillRect(asphaltWidth / 2 - 4, 330, 8, 80);
-      ctx.fillRect(asphaltWidth / 2 - 4, 480, 8, 80);
-
-      // Curb stone border (asphaltWidth..asphaltWidth+18)
-      ctx.fillStyle = '#7a7f88';
-      ctx.fillRect(asphaltWidth, 0, 18, size);
-      bumpCtx.fillStyle = '#d0d0d0';
-      bumpCtx.fillRect(asphaltWidth, 0, 18, size);
-
-      // Curb joints
-      ctx.fillStyle = '#3a3c42';
-      for (let y = 0; y < size; y += 40) {
-        ctx.fillRect(asphaltWidth, y, 18, 2);
-        bumpCtx.fillStyle = '#101010';
-        bumpCtx.fillRect(asphaltWidth, y, 18, 2);
-      }
-
-      // Sidewalk paving blocks (asphaltWidth+18..size)
-      const swStart = asphaltWidth + 18;
-      const swWidth = size - swStart;
-      ctx.fillStyle = '#9aa0a6';
-      ctx.fillRect(swStart, 0, swWidth, size);
-      bumpCtx.fillStyle = '#a0a0a0';
-      bumpCtx.fillRect(swStart, 0, swWidth, size);
-
-      // Paving tiles grid (40x30 tiles)
-      const tileW = 38;
-      const tileH = 26;
-      ctx.strokeStyle = '#5f6368';
-      ctx.lineWidth = 2;
-      bumpCtx.strokeStyle = '#202020';
-      bumpCtx.lineWidth = 2;
-
-      for (let x = swStart; x < size; x += tileW) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, size);
-        ctx.stroke();
-
-        bumpCtx.beginPath();
-        bumpCtx.moveTo(x, 0);
-        bumpCtx.lineTo(x, size);
-        bumpCtx.stroke();
-      }
-
-      for (let y = 0; y < size; y += tileH) {
-        ctx.beginPath();
-        ctx.moveTo(swStart, y);
-        ctx.lineTo(size, y);
-        ctx.stroke();
-
-        bumpCtx.beginPath();
-        bumpCtx.moveTo(swStart, y);
-        bumpCtx.lineTo(size, y);
-        bumpCtx.stroke();
-      }
-
-      diffuseTex = new THREE.CanvasTexture(canvas);
-      diffuseTex.wrapS = THREE.RepeatWrapping;
-      diffuseTex.wrapT = THREE.RepeatWrapping;
-      diffuseTex.repeat.set(6, 6);
-
-      bumpTex = new THREE.CanvasTexture(bumpCanvas);
-      bumpTex.wrapS = THREE.RepeatWrapping;
-      bumpTex.wrapT = THREE.RepeatWrapping;
-      bumpTex.repeat.set(6, 6);
-
-      SurfaceManager.cachedTextures.set(diffuseKey, diffuseTex);
-      SurfaceManager.cachedTextures.set(bumpKey, bumpTex);
-    }
-
-    const material = new THREE.MeshStandardMaterial({
-      map: diffuseTex,
-      bumpMap: bumpTex,
-      bumpScale: 0.04,
-      roughness: 0.82,
-      metalness: 0.1,
-      shadowSide: THREE.DoubleSide,
-    });
-
-    return { material };
-  }
-
-  // 3. Sand (Песок)
-  private createSandMaterial() {
-    const diffuseKey = 'sand_diffuse';
-    const bumpKey = 'sand_bump';
-
-    let diffuseTex = SurfaceManager.cachedTextures.get(diffuseKey);
-    let bumpTex = SurfaceManager.cachedTextures.get(bumpKey);
-
-    if (!diffuseTex || !bumpTex) {
-      const size = 512;
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d')!;
-
-      const bumpCanvas = document.createElement('canvas');
-      bumpCanvas.width = size;
-      bumpCanvas.height = size;
-      const bumpCtx = bumpCanvas.getContext('2d')!;
-
-      // Warm golden dune sand base
-      ctx.fillStyle = '#d8bb88';
-      ctx.fillRect(0, 0, size, size);
-
-      bumpCtx.fillStyle = '#808080';
-      bumpCtx.fillRect(0, 0, size, size);
-
-      // Procedural wind ripples
-      for (let y = 0; y < size; y++) {
-        // Dune ripple equation
-        const wave = Math.sin((y / size) * Math.PI * 12 + Math.sin((y / 40)) * 1.5) * 16;
-        const r = Math.min(255, Math.max(0, 216 + wave * 0.9));
-        const g = Math.min(255, Math.max(0, 187 + wave * 0.8));
-        const b = Math.min(255, Math.max(0, 136 + wave * 0.5));
-
-        ctx.strokeStyle = `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(size, y);
-        ctx.stroke();
-
-        const bumpVal = Math.round(128 + wave * 3.5);
-        bumpCtx.strokeStyle = `rgb(${bumpVal},${bumpVal},${bumpVal})`;
-        bumpCtx.beginPath();
-        bumpCtx.moveTo(0, y);
-        bumpCtx.lineTo(size, y);
-        bumpCtx.stroke();
-      }
-
-      // Fine sand grain speckles
-      const imgData = ctx.getImageData(0, 0, size, size);
-      const bumpData = bumpCtx.getImageData(0, 0, size, size);
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        const noise = (Math.random() - 0.5) * 24;
-        imgData.data[i] = Math.min(255, Math.max(0, imgData.data[i] + noise));
-        imgData.data[i + 1] = Math.min(255, Math.max(0, imgData.data[i + 1] + noise * 0.8));
-        imgData.data[i + 2] = Math.min(255, Math.max(0, imgData.data[i + 2] + noise * 0.6));
-
-        const b = bumpData.data[i] + (Math.random() - 0.5) * 25;
-        bumpData.data[i] = b;
-        bumpData.data[i + 1] = b;
-        bumpData.data[i + 2] = b;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      bumpCtx.putImageData(bumpData, 0, 0);
-
-      diffuseTex = new THREE.CanvasTexture(canvas);
-      diffuseTex.wrapS = THREE.RepeatWrapping;
-      diffuseTex.wrapT = THREE.RepeatWrapping;
-      diffuseTex.repeat.set(12, 12);
-
-      bumpTex = new THREE.CanvasTexture(bumpCanvas);
-      bumpTex.wrapS = THREE.RepeatWrapping;
-      bumpTex.wrapT = THREE.RepeatWrapping;
-      bumpTex.repeat.set(12, 12);
-
-      SurfaceManager.cachedTextures.set(diffuseKey, diffuseTex);
-      SurfaceManager.cachedTextures.set(bumpKey, bumpTex);
-    }
-
-    const material = new THREE.MeshStandardMaterial({
-      map: diffuseTex,
-      bumpMap: bumpTex,
-      bumpScale: 0.06,
-      roughness: 0.94,
-      metalness: 0.02,
-      shadowSide: THREE.DoubleSide,
-    });
-
-    return { material };
-  }
-
-  // 4. Porcelain Stoneware Tile (Керамогранитная плитка)
   private createTileMaterial() {
     const diffuseKey = 'tile_diffuse';
     const bumpKey = 'tile_bump';
@@ -1170,6 +850,7 @@ export class SurfaceManager {
 
   public dispose() {
     if(this.disposed)return;this.disposed=true;
+    this.tileLease?.release();this.tileLease=null;
     if(this.ownedEnvironment){
       if(this.scene.environment===this.ownedEnvironment)this.scene.environment=null;
       this.ownedEnvironment.dispose();this.ownedEnvironment=null;

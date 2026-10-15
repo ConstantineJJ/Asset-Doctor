@@ -1,3 +1,4 @@
+import {surfaceChoices} from '../viewer/SurfaceCatalog';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Box,
@@ -124,19 +125,7 @@ export const Viewport: React.FC<ViewportProps> = ({
     setCompareOpen(false);
   };
 
-  const surfaces: Array<{ id: SurfaceType; labelRu: string; labelEn: string; icon: string }> = [
-    { id: 'grid', labelRu: 'Сетка студии', labelEn: 'Studio Grid', icon: '📐' },
-    { id: 'tile', labelRu: 'Керамогранит', labelEn: 'Porcelain Tile', icon: '🏛️' },
-    { id: 'cobblestone', labelRu: 'Брусчатка', labelEn: 'Cobblestone', icon: '🧱' },
-    { id: 'factory', labelRu: 'Завод / Цех', labelEn: 'Factory Floor', icon: '🏭' },
-    { id: 'moon', labelRu: 'Лунная поверхность', labelEn: 'Moon Surface', icon: '🌑' },
-    { id: 'countryside', labelRu: 'Сельская местность', labelEn: 'Countryside', icon: '🌾' },
-    { id: 'grass', labelRu: 'Газон (Трава)', labelEn: 'Lawn (Grass)', icon: '🌿' },
-    { id: 'road', labelRu: 'Дорога / тротуар', labelEn: 'Road & Sidewalk', icon: '🛣️' },
-    { id: 'sand', labelRu: 'Песок', labelEn: 'Sand', icon: '🏖️' },
-    { id: 'wood', labelRu: 'Деревянный пол', labelEn: 'Wood Floor', icon: '🪵' },
-    { id: 'none', labelRu: 'Без поверхности', labelEn: 'No Surface', icon: '🚫' },
-  ];
+  const surfaces=surfaceChoices;
 
   const currentSurfaceObj = surfaces.find((s) => s.id === surface) || surfaces[0];
 
@@ -199,7 +188,7 @@ export const Viewport: React.FC<ViewportProps> = ({
               </button>
 
               {showSurfaceMenu && (
-                <div className="absolute right-0 top-full mt-1.5 w-52 rounded-lg border border-[#323642] bg-[#191c22]/95 backdrop-blur-md p-1.5 shadow-2xl z-30 space-y-1">
+                <div className="absolute right-0 top-full mt-1.5 w-60 max-h-[65vh] overflow-y-auto custom-scrollbar rounded-lg border border-[#323642] bg-[#191c22]/95 backdrop-blur-md p-1.5 shadow-2xl z-30 space-y-1">
                   <div className="px-2 py-1 text-[10px] font-semibold uppercase text-cyan-400 border-b border-[#292d37]">
                     {language === 'ru' ? 'Поверхность под моделью' : 'Ground Surfaces'}
                   </div>
