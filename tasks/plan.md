@@ -18,3 +18,7 @@
 1. Дать семь существующих профилей через доступный RU/EN selector в Inspector, показать активный профиль и переход к оценке пригодности.
 2. Пересчитывать только Fitness из сохранённых метрик. Технические findings, UNKNOWN от неудачного worker, scan revision, source и история сохраняются. Незавершённая topology использует последний выбранный профиль при завершении.
 3. Проверить General/Mobile и все профили, single/bulk diagnostic report, in-flight/error paths, compact/4K UI. Затем полный fresh production regression, unit/native gates, Windows/NSIS build и отдельная поставка. Desktop EXE/installer автоматически не запускать.
+
+## Общее ревью после F09 / 2.0.14
+
+По дополнительному поручению владельца после завершения поставки 2.0.13 проверить подсистемы программы и исправить подтверждённые дефекты. Проведён проход App/session/import, анализ/rig/animation, Heal/exports, workers/memory/resources, UI/settings/logs и native/build/security. В отдельные commits вынесены исправления CUBICSPLINE-диагностики, viewport framing/bounds/drag, worker envelope/export freshness и обязательного Rust formatting gate. RED/green доказательства и границы проверки — в PROGRAM_REVIEW_2_0_14.md. Финальная поставка включает F09; ручная приёмка остаётся открытой.
