@@ -46,5 +46,6 @@ test('A real history-budget refusal stays atomic and appears in the system log w
  await page.mouse.move(...start!);await page.mouse.down();await page.mouse.move(cx+dx*Math.cos(.4)-dy*Math.sin(.4),cy+dx*Math.sin(.4)+dy*Math.cos(.4),{steps:8});await page.mouse.up();
  expect((await history(page)).undoSteps).toBe(0);expect((await rigViewerState(page)).bones.find(bone=>bone.uuid===joint.uuid)!.quaternion).toEqual(joint.quaternion);
  await page.getByRole('button',{name:'System log',exact:true}).click();const failed=page.getByRole('dialog',{name:'System log',exact:true}).locator('pre').filter({hasText:'gizmo_failed'}).last();await expect(failed).toBeVisible();const gizmoRecord=JSON.parse((await failed.textContent())!);expect(gizmoRecord.context.tool).toBe('rotate');expect(gizmoRecord.context.error.limitBytes).toBe(1);expect(gizmoRecord.context.jointId).toBe(joint.uuid);
+ await page.getByRole('combobox',{name:'Log level',exact:true}).selectOption('error');await failed.scrollIntoViewIfNeeded();await expect(failed).toBeInViewport();
  await test.info().attach('rig-budget-log.png',{body:await page.screenshot(),contentType:'image/png'});
 });
