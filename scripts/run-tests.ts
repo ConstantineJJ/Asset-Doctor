@@ -16,6 +16,7 @@ import { runFileIOTests } from '../src/platform/FileIOTests';
 import { runDiagnosticCoreTests } from '../src/analysis/DiagnosticCoreTests';
 import { runDiagnosticCoverageTests } from '../src/analysis/DiagnosticCoverageTests';
 import {runDiagnosticReportTests} from '../src/diagnostics/DiagnosticReportTests';
+import {runRigMemoryRegressionTests} from '../src/rig/RigMemoryRegressionTests';
 import { runSourceFidelityTests } from '../src/analysis/SourceFidelityTests';
 import { runCompareLayoutTests } from '../src/compare/CompareLayoutTests';
 import { runCompareCloneTests } from '../src/compare/CompareCloneTests';
@@ -33,6 +34,7 @@ import {
 async function main() {
   const results = [
     ...runDiagnosticReportTests(),
+    ...runRigMemoryRegressionTests(),
     ...(await runSystemLogTests()),
     ...(await runFloorTexturePoolTests()),
     ...runShortcutTests(),

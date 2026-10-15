@@ -1502,7 +1502,7 @@ export function App() {
     if(!session||pendingRigRemovalRef.current||fittingBusyRef.current||rigDragging||healBusyRef.current||exportCoordinatorRef.current.busy||repairQueueRunningRef.current)return;
     setRigContext(null);setRigError(null);sceneManagerRef.current?.detachRigMixer();rigUndoingRef.current=undo;
     try {action(session);sceneManagerRef.current?.refreshRigStructure();sceneManagerRef.current?.syncRigClips();publishRigChange();}
-    catch(error){sceneManagerRef.current?.syncRigClips();setRigError(jointDeleteMessage(error instanceof Error?error.message:String(error),language));}
+    catch(error){const history=session.getHistoryMemoryUsage();systemLog.record('error','rig','action_failed',{assetId:session.root.uuid,revision:session.revision,error,historyBytes:history.bytes,historyLimitBytes:history.limit,undoSteps:history.undoSteps,redoSteps:history.redoSteps});sceneManagerRef.current?.syncRigClips();setRigError(jointDeleteMessage(error instanceof Error?error.message:String(error),language));}
     finally {rigUndoingRef.current=false;}
   };
   const handleUndoRig=()=>handleRigAction(session=>session.undo(),true);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {systemLog} from '../platform/SystemLog';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { RigEditSession, type ChildPolicy } from './RigEditSession';
 import { boneAxis } from './RigAxis';
@@ -19,6 +20,11 @@ export class RigGizmo {
   private failure:Error|null=null;
   private rotationOffset=new THREE.Quaternion();
   private clearHover=()=>{if(!this.controls.dragging)this.controls.axis=null;};
+  private reportError(error:unknown){
+    const history=this.session?.getHistoryMemoryUsage();
+    systemLog.record('error','rig','gizmo_failed',{assetId:this.session?.root.uuid,jointId:this.selected,tool:this.settings.tool,space:this.settings.space,error,historyBytes:history?.bytes,historyLimitBytes:history?.limit,undoSteps:history?.undoSteps,redoSteps:history?.redoSteps});
+    this.callbacks.error(error instanceof Error?error.message:String(error));
+  }
 
   constructor(scene:THREE.Scene,camera:THREE.Camera,private canvas:HTMLElement,private callbacks:{drag:(active:boolean)=>void;changed:()=>void;error:(message:string)=>void}) {
     this.controls=new TransformControls(camera,canvas);
@@ -37,7 +43,7 @@ export class RigGizmo {
     this.controls.addEventListener('mouseUp',()=>{
       if(this.leaf && this.session?.mode==='edit') {
         this.session.cancelGesture();
-        try {this.commitLeaf();} catch(error) {this.callbacks.error(error instanceof Error?error.message:String(error));}
+        try {this.commitLeaf();} catch(error) {this.reportError(error);}
       }
       if(this.session?.mode==='edit') this.session.finishGesture();
       this.callbacks.drag(false);
@@ -68,7 +74,7 @@ export class RigGizmo {
     this.rotationOffset.identity();
     const twist=this.settings.tool==='twist';
     if(twist) {
-      try {this.alignTwist();} catch(error) {this.target=null;this.callbacks.error(error instanceof Error?error.message:String(error));return;}
+      try {this.alignTwist();} catch(error) {this.target=null;this.reportError(error);return;}
     }
     if(this.leaf) {
       this.proxy.position.copy(new THREE.Vector3().fromArray(session.getTerminalTip(bone.uuid)??[0,.2,0]).applyMatrix4(bone.matrixWorld));
@@ -101,7 +107,7 @@ export class RigGizmo {
       if(session.mode==='pose') session.previewPoseRotation(target.uuid,quaternion.toArray());
       else session.previewJoint(target.uuid,this.controls.mode==='rotate'?{quaternion:quaternion.toArray()}:{position:position.toArray()},this.settings.childPolicy);
     } catch(error) {
-      this.failure=error instanceof Error?error:new Error(String(error)); session.cancelGesture(); this.callbacks.error(this.failure.message);
+      this.failure=error instanceof Error?error:new Error(String(error)); session.cancelGesture(); this.reportError(this.failure);
     }
   }
   commitLeaf() {
@@ -120,7 +126,7 @@ export class RigGizmo {
     if(this.controls.dragging || !this.controls.object || !this.target)return;
     this.target.getWorldPosition(this.proxy.position);this.target.getWorldQuaternion(this.proxy.quaternion);
     if(this.settings.tool==='twist') {
-      try {this.alignTwist();} catch(error) {this.controls.detach();this.callbacks.error(error instanceof Error?error.message:String(error));return;}
+      try {this.alignTwist();} catch(error) {this.controls.detach();this.reportError(error);return;}
     }
     if(this.leaf&&this.session){
       const start=this.proxy.position.clone();

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {assertMemoryBytes,binaryBytes,geometryArrays,memoryLimits} from '../performance/MemoryBudget';
 import {rigHistoryBytes,rigSnapshotMetadata} from './RigHistoryBudget';
 import {retainModelResources,retainModelGeometry,retainModelVariant} from '../loaders/ModelResources';
-import { cloneClips, rebaseClips, retimeClip } from '../animation/ClipEdits';
+import { cloneClips, rebaseClips, retimeClip, equalClipData } from '../animation/ClipEdits';
 import { documentMatrix } from '../viewer/AssetPresentation';
 import { getSourceAssociation, getSourceDocument, getSourceAudit } from '../loaders/AssetRuntimeMetadata';
 import {copySourceAssociation} from '../loaders/AssetRuntimeMetadata';
@@ -80,7 +80,7 @@ export class RigEditSession {
   get isGestureActive() {return this.gesture!==null;}
   get canUndo() { return this.past.length>0; }
   get canRedo() { return this.future.length>0; }
-  get hasEdits() { return this.signature(this.authored)!==this.signature(this.baseline); }
+  get hasEdits() { return !this.sameState(this.authored,this.baseline); }
   getRest(uuid:string) { const rest=this.authored.nodes.get(uuid); return rest && structuredClone(rest); }
   getTerminalTip(uuid:string) { return this.authored.tips.get(uuid)?.slice(); }
   snapshot():RigSnapshot { return this.captureSnapshot(this.authored); }
@@ -103,11 +103,13 @@ export class RigEditSession {
   private signature(snapshot:RigSnapshot) {
     let signature=this.signatures.get(snapshot);
     if(signature===undefined) {
-      signature=JSON.stringify([[...snapshot.objects].map(([id,node])=>[id,node.type]),snapshot.clipSources,[...snapshot.removedTargets],[...snapshot.nodes],[...snapshot.children],[...snapshot.joints].map(([skin,joints])=>[skin.uuid,joints]),[...snapshot.geometryEdits].map(([id,edit])=>[id,edit.geometry.uuid]),[...snapshot.tips],snapshot.clips.map(clip=>[clip.name,clip.duration,clip.tracks.map(track=>[Array.from(track.times),Array.from(track.values)])])]);
+      signature=JSON.stringify([[...snapshot.objects].map(([id,node])=>[id,node.type]),snapshot.clipSources,[...snapshot.removedTargets],[...snapshot.nodes],[...snapshot.children],[...snapshot.joints].map(([skin,joints])=>[skin.uuid,joints]),[...snapshot.geometryEdits].map(([id,edit])=>[id,edit.geometry.uuid]),[...snapshot.tips]]);
       this.signatures.set(snapshot,signature);
     }
     return signature;
   }
+  private sameState(a:RigSnapshot,b:RigSnapshot){return a===b||this.signature(a)===this.signature(b)&&equalClipData(a.clips,b.clips);}
+  getHistoryMemoryUsage(){return {bytes:rigHistoryBytes([this.baseline,this.authored,...this.past,...this.future],this.ownedGeometries,this.signatures),limit:this.historyLimitBytes,undoSteps:this.past.length,redoSteps:this.future.length};}
   private capture(clips:THREE.AnimationClip[],tips:Map<string,number[]>):RigSnapshot {
     const active:THREE.Object3D[]=[];this.root.traverse(node=>{if(this.objects.has(node.uuid))active.push(node);});
     return {objects:new Map(active.map(node=>[node.uuid,node])),clipSources:this.authored?.clipSources.slice()??clips.map((_,i)=>i),removedTargets:new Set(this.authored?.removedTargets??[]),nodes:new Map(active.map(node=>[node.uuid,{position:node.position.toArray(),quaternion:node.quaternion.toArray(),scale:node.scale.toArray()}])),
@@ -374,7 +376,7 @@ export class RigEditSession {
   finishGesture() {
     if(!this.gesture) return;
     const gesture=this.gesture; this.gesture=null;
-    if(this.signature(this.authored)!==this.signature(gesture.base)) {this.past.push(gesture.base);if(this.past.length>100)this.past.shift();this.future=[];this.revision++;}
+    if(!this.sameState(this.authored,gesture.base)) {this.past.push(gesture.base);if(this.past.length>100)this.past.shift();this.future=[];this.revision++;}
   }
   cancelGesture() {
     if(!this.gesture) return;
@@ -385,7 +387,7 @@ export class RigEditSession {
     const retained=rigHistoryBytes([this.baseline,this.authored,...this.past,...this.future],this.ownedGeometries,this.signatures);
     const clips=this.clips.flatMap(clip=>clip.tracks.flatMap(track=>[track.times,track.values]));
     const geometryReserve=geometryCopy?[...this.authored.geometries.values()].reduce((sum,geometry)=>sum+2*binaryBytes(geometryArrays(geometry)),0):0;
-    assertMemoryBytes(retained+binaryBytes(clips)+rigSnapshotMetadata(this.authored)+geometryReserve,this.historyLimitBytes);
+    assertMemoryBytes(retained+binaryBytes(clips)+rigSnapshotMetadata(this.authored)+geometryReserve,this.historyLimitBytes,'Rig Undo history');
   }
   private transaction(update:()=>void) {
     this.assertHistoryBudget();
@@ -393,7 +395,8 @@ export class RigEditSession {
     try {
       this.restoreRest(); update();
       this.authored=this.capture(this.authored.clips,this.authored.tips);
-      if(this.signature(previous)===this.signature(this.authored)) { this.authored=previous; return; }
+      if(this.sameState(previous,this.authored)) { this.authored=previous; return; }
+      assertMemoryBytes(rigHistoryBytes([this.baseline,this.authored,previous,...this.past],this.ownedGeometries,this.signatures),this.historyLimitBytes,'Rig Undo history');
       this.past.push(previous); if(this.past.length>100) this.past.shift();
       this.future=[]; this.revision++;
     } catch(error) { this.authored=previous; this.apply(live); throw error; }

@@ -2,13 +2,12 @@ import type * as THREE from 'three';
 import type {RigSnapshot} from './RigEditSession';
 import {binaryBytes,geometryArrays} from '../performance/MemoryBudget';
 
-/** Conservative accounting for retained clip buffers and the cached JSON signatures.
- * Number-to-JSON strings use at most 32 UTF-16 characters per numeric sample.
- * The per-node allowance covers small rest/bind/hierarchy records, not OS RAM. */
+/** Numeric samples stay in unique backing buffers, never cached JSON strings.
+ * Per-state metadata and small rest signatures are counted separately. */
 export function rigSnapshotMetadata(state:RigSnapshot,signature?:string){
  const tracks=state.clips.flatMap(clip=>clip.tracks);
  return state.nodes.size*1024+state.clips.reduce((sum,clip)=>sum+clip.name.length*2+256,0)+tracks.reduce((sum,track)=>sum+track.name.length*2+256,0)
-  +(signature===undefined?tracks.reduce((sum,track)=>sum+(track.times.length+track.values.length)*64,0):signature.length*2);
+  +(signature===undefined?state.nodes.size*1024:signature.length*2);
 }
 export function rigHistoryBytes(states:RigSnapshot[],owned:Iterable<THREE.BufferGeometry>,signatures:WeakMap<RigSnapshot,string>){
  const unique=[...new Set(states)],arrays:ArrayBufferView[]=[];

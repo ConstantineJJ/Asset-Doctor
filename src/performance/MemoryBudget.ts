@@ -6,11 +6,16 @@ const modelFile=64*MiB;
 // They are not estimates of available RAM, process heap limits or GPU memory.
 // Every one of Compare's eight slots admits the same per-file allowance.
 export const memoryLimits={modelFile,compareSources:8*modelFile,packet:32*MiB,workerInputs:64*MiB,history:128*MiB} as const;
+export class MemoryBudgetError extends Error {
+ constructor(readonly requestedBytes:number,readonly limitBytes:number,label:string){
+  const size=(value:number)=>Number.isFinite(value)&&value>=0?`${(value/MiB).toFixed(2)} MiB`:'invalid size';
+  super(`${label} exceeds the configured memory budget (${size(requestedBytes)}; maximum ${size(limitBytes)}).`);this.name='MemoryBudgetError';
+ }
+}
 
 export function assertMemoryBytes(bytes:number,limit:number,label='Operation'){
  if(!Number.isSafeInteger(bytes)||bytes<0||bytes>limit){
-  const size=(value:number)=>Number.isFinite(value)&&value>=0?`${(value/MiB).toFixed(2)} MiB`:'invalid size';
-  throw new Error(`${label} exceeds the configured memory budget (${size(bytes)}; maximum ${size(limit)}).`);
+  throw new MemoryBudgetError(bytes,limit,label);
  }
 }
 export class ByteBudget {

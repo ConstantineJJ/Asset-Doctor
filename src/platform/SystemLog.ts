@@ -10,7 +10,7 @@ export function sanitizeLogText(value:string){
   .replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)["']?[^\s,"']+/gi,'$1[redacted]')
   .replace(/(?:[A-Za-z]:[\\/]|\/(?:Users|home)\/)[^\r\n"'<>|]+/g,path=>`<local>/${path.split(/[\\/]/).at(-1)}`);
 }
-const allowed=new Set(['asset','assetId','fileName','parentOperationId','stage','reason','durationMs','count','triangles','vertices','status','revision','mode','fileBytes','error','userAgent','surface']);
+const allowed=new Set(['asset','assetId','jointId','tool','space','historyBytes','historyLimitBytes','undoSteps','redoSteps','fileName','parentOperationId','stage','reason','durationMs','count','triangles','vertices','status','revision','mode','fileBytes','error','userAgent','surface']);
 function safeContext(input:Record<string,unknown>){
  const result:Record<string,unknown>={};
  for(const [key,value]of Object.entries(input)){
@@ -18,6 +18,8 @@ function safeContext(input:Record<string,unknown>){
   if(key==='error'){
    const error=value instanceof Error?value:typeof value==='object'&&value?value as {name?:unknown;message?:unknown;stack?:unknown}:{message:String(value)};
    result.error={name:sanitizeLogText(String(error.name??'Error')).slice(0,100),message:sanitizeLogText(String(error.message??value)).slice(0,2000),stack:sanitizeLogText(String(error.stack??'')).slice(0,6000)};
+   const budget=error as {requestedBytes?:unknown;limitBytes?:unknown};
+   if(typeof budget.requestedBytes==='number'&&Number.isFinite(budget.requestedBytes)&&typeof budget.limitBytes==='number'&&Number.isFinite(budget.limitBytes))Object.assign(result.error as object,{requestedBytes:budget.requestedBytes,limitBytes:budget.limitBytes});
   }else if(typeof value==='string')result[key]=sanitizeLogText(value).slice(0,1000);
   else if(typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value))result[key]=value;
  }
